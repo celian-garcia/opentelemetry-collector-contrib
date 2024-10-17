@@ -136,7 +136,7 @@ type MetricBatchValuesClient interface {
 
 func (s *azureBatchScraper) GetMetricsBatchValuesClient(region string) MetricBatchValuesClient {
 	endpoint := "https://" + region + ".metrics.monitor.azure.com"
-	s.settings.Logger.Debug("Batch Endpoint", zap.String("endpoint", endpoint))
+	s.settings.Logger.Info("Batch Endpoint", zap.String("endpoint", endpoint))
 	client, _ := azquery.NewMetricsBatchClient(endpoint, s.cred, s.azQueryMetricsBatchClientOptions)
 	return client
 }
@@ -385,23 +385,9 @@ func (s *azureBatchScraper) getBatchMetricsValues(ctx context.Context, subscript
 
 	for compositeKey, metricsByGrain := range resType.metricsByCompositeKey {
 		now := time.Now().UTC()
+		metricsByGrain.metricsValuesUpdated = now
 
-		// Azure Metrics only allows querying every minute?
-		d := (60 * time.Second)
-		closestMinute := now.Round(d)
-		timeSinceClosestMinute := time.Since(closestMinute).Seconds()
-		if timeSinceClosestMinute < 0 {
-			// Skip this batch to avoid duplication (on first interval)
-			continue
-		}
-
-		if time.Since(metricsByGrain.metricsValuesUpdated).Seconds() < float64(timeGrains[compositeKey.timeGrain]) {
-			continue
-		}
-		metricsByGrain.metricsValuesUpdated = closestMinute
-
-		timeGrain := timeGrains[compositeKey.timeGrain]
-		startTime := closestMinute.Add(time.Duration(-timeGrain) * time.Second)
+		startTime := now.Add(time.Duration(-timeGrains[compositeKey.timeGrain]) * time.Second * 4) // times 4 because for some resources, data are missing for the very latest timestamp. The processing will keep only the latest timestamp with data.
 		for region := range s.regionsFromSubscriptions[*subscription.SubscriptionID] {
 			clientMetrics := s.GetMetricsBatchValuesClient(region)
 
@@ -430,7 +416,7 @@ func (s *azureBatchScraper) getBatchMetricsValues(ctx context.Context, subscript
 						zap.Int("startResources", startResources),
 						zap.Int("endResources", endResources),
 						zap.Time("startTime", startTime),
-						zap.Time("endTime", closestMinute),
+						zap.Time("endTime", now),
 						zap.String("interval", compositeKey.timeGrain),
 					)
 
@@ -449,7 +435,7 @@ func (s *azureBatchScraper) getBatchMetricsValues(ctx context.Context, subscript
 								azquery.AggregationTypeCount,
 							),
 							StartTime: to.Ptr(startTime.Format(time.RFC3339)),
-							EndTime:   to.Ptr(closestMinute.Format(time.RFC3339)),
+							EndTime:   to.Ptr(now.Format(time.RFC3339)),
 							Interval:  to.Ptr(compositeKey.timeGrain),
 							Top:       to.Ptr(int32(s.cfg.MaximumNumberOfDimensionsInACall)), // Defaults to 10 (may be limiting results)
 						},
@@ -464,7 +450,6 @@ func (s *azureBatchScraper) getBatchMetricsValues(ctx context.Context, subscript
 						break
 					}
 
-					// s.settings.Logger.Debug("scrape", zap.Any("response.Values", response.Values))
 					for _, metricValues := range response.Values {
 						for _, metric := range metricValues.Values {
 
