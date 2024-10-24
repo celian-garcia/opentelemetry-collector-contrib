@@ -457,6 +457,9 @@ func (s *azureBatchScraper) getBatchMetricsValues(ctx context.Context, subscript
 								if timeseriesElement.Data != nil {
 									if metricValues.ResourceID != nil {
 										res := s.resources[*subscription.SubscriptionID][*metricValues.ResourceID]
+										if res == nil {
+											continue
+										}
 										attributes := map[string]*string{}
 										for name, value := range res.attributes {
 											attributes[name] = value
