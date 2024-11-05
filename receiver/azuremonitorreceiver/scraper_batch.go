@@ -19,7 +19,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/runtime"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
-	"github.com/Azure/azure-sdk-for-go/sdk/monitor/azquery"
+	"github.com/Azure/azure-sdk-for-go/sdk/monitor/query/azmetrics"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/monitor/armmonitor"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resources/armresources"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resources/armsubscriptions"
@@ -35,7 +35,7 @@ import (
 type azureType struct {
 	name                      *string
 	attributes                map[string]*string
-	resourceIDs               []*string
+	resourceIDs               []string
 	metricsByCompositeKey     map[metricsCompositeKey]*azureResourceMetrics
 	metricsDefinitionsUpdated time.Time
 }
@@ -48,7 +48,6 @@ func newBatchScraper(conf *Config, settings receiver.Settings) *azureBatchScrape
 		azIDCredentialsFunc:             azidentity.NewClientSecretCredential,
 		azIDWorkloadFunc:                azidentity.NewWorkloadIdentityCredential,
 		armMonitorDefinitionsClientFunc: armmonitor.NewMetricDefinitionsClient,
-		azQueryMetricsBatchClientFunc:   azquery.NewMetricsBatchClient,
 		mutex:                           &sync.Mutex{},
 	}
 }
@@ -73,8 +72,7 @@ type azureBatchScraper struct {
 	armClientOptions                 *arm.ClientOptions
 	armSubscriptionclient            ArmsubscriptionClient
 	armMonitorDefinitionsClientFunc  func(string, azcore.TokenCredential, *arm.ClientOptions) (*armmonitor.MetricDefinitionsClient, error)
-	azQueryMetricsBatchClientOptions *azquery.MetricsBatchClientOptions
-	azQueryMetricsBatchClientFunc    func(string, azcore.TokenCredential, *azquery.MetricsBatchClientOptions) (*azquery.MetricsBatchClient, error)
+	azQueryMetricsBatchClientOptions *azmetrics.ClientOptions
 	mutex                            *sync.Mutex
 }
 
@@ -95,7 +93,7 @@ func (s *azureBatchScraper) getArmClientOptions() *arm.ClientOptions {
 	return &options
 }
 
-func (s *azureBatchScraper) getAzQueryMetricsBatchClientOptions() *azquery.MetricsBatchClientOptions {
+func (s *azureBatchScraper) getAzQueryMetricsBatchClientOptions() *azmetrics.ClientOptions {
 	var cloudToUse cloud.Configuration
 	switch s.cfg.Cloud {
 	case azureGovernmentCloud:
@@ -104,7 +102,7 @@ func (s *azureBatchScraper) getAzQueryMetricsBatchClientOptions() *azquery.Metri
 		cloudToUse = cloud.AzurePublic
 	}
 
-	options := azquery.MetricsBatchClientOptions{
+	options := azmetrics.ClientOptions{
 		ClientOptions: azcore.ClientOptions{
 			Cloud: cloudToUse,
 		},
@@ -129,15 +127,15 @@ func (s *azureBatchScraper) getMetricsDefinitionsClient(subscriptionID string) m
 }
 
 type MetricBatchValuesClient interface {
-	QueryBatch(ctx context.Context, subscriptionID string, metricNamespace string, metricNames []string, resourceIDs azquery.ResourceIDList, options *azquery.MetricsBatchClientQueryBatchOptions) (
-		azquery.MetricsBatchClientQueryBatchResponse, error,
+	QueryResources(ctx context.Context, subscriptionID string, metricNamespace string, metricNames []string, resourceIDs azmetrics.ResourceIDList, options *azmetrics.QueryResourcesOptions) (
+		azmetrics.QueryResourcesResponse, error,
 	)
 }
 
 func (s *azureBatchScraper) GetMetricsBatchValuesClient(region string) MetricBatchValuesClient {
 	endpoint := "https://" + region + ".metrics.monitor.azure.com"
 	s.settings.Logger.Info("Batch Endpoint", zap.String("endpoint", endpoint))
-	client, _ := azquery.NewMetricsBatchClient(endpoint, s.cred, s.azQueryMetricsBatchClientOptions)
+	client, _ := azmetrics.NewClient(endpoint, s.cred, s.azQueryMetricsBatchClientOptions)
 	return client
 }
 
@@ -292,10 +290,10 @@ func (s *azureBatchScraper) getResources(ctx context.Context, subscriptionID str
 					updatedTypes[*resource.Type] = &azureType{
 						name:        resource.Type,
 						attributes:  map[string]*string{},
-						resourceIDs: []*string{resource.ID},
+						resourceIDs: []string{*resource.ID},
 					}
 				} else {
-					updatedTypes[*resource.Type].resourceIDs = append(updatedTypes[*resource.Type].resourceIDs, resource.ID)
+					updatedTypes[*resource.Type].resourceIDs = append(updatedTypes[*resource.Type].resourceIDs, *resource.ID)
 				}
 			}
 			delete(existingResources, *resource.ID)
@@ -335,12 +333,12 @@ func (s *azureBatchScraper) getResourceMetricsDefinitionsByType(ctx context.Cont
 	s.resourceTypes[*subscription.SubscriptionID][resourceType].metricsByCompositeKey = map[metricsCompositeKey]*azureResourceMetrics{}
 
 	resourceIDs := s.resourceTypes[*subscription.SubscriptionID][resourceType].resourceIDs
-	if len(resourceIDs) == 0 && resourceIDs[0] != nil {
+	if len(resourceIDs) == 0 && len(resourceIDs[0]) > 0 {
 		return
 	}
 
 	clientMetricsDefinitions := s.getMetricsDefinitionsClient(*subscription.SubscriptionID)
-	pager := clientMetricsDefinitions.NewListPager(*resourceIDs[0], nil)
+	pager := clientMetricsDefinitions.NewListPager(resourceIDs[0], nil)
 	for pager.More() {
 		nextResult, err := pager.NextPage(ctx)
 		if err != nil {
@@ -420,20 +418,23 @@ func (s *azureBatchScraper) getBatchMetricsValues(ctx context.Context, subscript
 						zap.String("interval", compositeKey.timeGrain),
 					)
 
-					response, err := clientMetrics.QueryBatch(
+					response, err := clientMetrics.QueryResources(
 						ctx,
 						*subscription.SubscriptionID,
 						resourceType,
 						metricsByGrain.metrics[start:end],
-						azquery.ResourceIDList{ResourceIDs: resType.resourceIDs[startResources:endResources]},
-						&azquery.MetricsBatchClientQueryBatchOptions{
-							Aggregation: to.SliceOfPtrs(
-								azquery.AggregationTypeAverage,
-								azquery.AggregationTypeMaximum,
-								azquery.AggregationTypeMinimum,
-								azquery.AggregationTypeTotal,
-								azquery.AggregationTypeCount,
-							),
+						azmetrics.ResourceIDList{ResourceIDs: resType.resourceIDs[startResources:endResources]},
+						&azmetrics.QueryResourcesOptions{
+							Aggregation: to.Ptr(strings.Join(
+								[]string{
+									string(armmonitor.AggregationTypeAverage),
+									string(armmonitor.AggregationTypeMaximum),
+									string(armmonitor.AggregationTypeMinimum),
+									string(armmonitor.AggregationTypeTotal),
+									string(armmonitor.AggregationTypeCount),
+								},
+								",",
+							)),
 							StartTime: to.Ptr(startTime.Format(time.RFC3339)),
 							EndTime:   to.Ptr(now.Format(time.RFC3339)),
 							Interval:  to.Ptr(compositeKey.timeGrain),
@@ -498,8 +499,8 @@ func (s *azureBatchScraper) getBatchMetricsValues(ctx context.Context, subscript
 
 func (s *azureBatchScraper) processQueryTimeseriesData(
 	resourceID string,
-	metric *azquery.Metric,
-	metricValue *azquery.MetricValue,
+	metric azmetrics.Metric,
+	metricValue azmetrics.MetricValue,
 	attributes map[string]*string,
 ) {
 	s.mutex.Lock()
