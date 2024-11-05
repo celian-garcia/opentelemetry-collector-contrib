@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/consumer/consumertest"
@@ -48,6 +49,7 @@ func TestNewFactory(t *testing.T) {
 					MaximumNumberOfRecordsPerResource: 10,
 					Authentication:                    servicePrincipal,
 					Cloud:                             defaultCloud,
+					SplitByDimensions:                 to.Ptr(defaultSplitByDimensions),
 				}
 
 				require.Equal(t, expectedCfg, factory.CreateDefaultConfig())
