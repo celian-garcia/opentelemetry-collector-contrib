@@ -8,6 +8,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/consumer"
 	"go.opentelemetry.io/collector/receiver"
@@ -19,6 +20,7 @@ import (
 const (
 	defaultCollectionInterval = 10 * time.Second
 	defaultCloud              = azureCloud
+	defaultSplitByDimensions  = true
 )
 
 var errConfigNotAzureMonitor = errors.New("Config was not a Azure Monitor receiver config")
@@ -46,6 +48,7 @@ func createDefaultConfig() component.Config {
 		Services:                          monitorServices,
 		Authentication:                    servicePrincipal,
 		Cloud:                             defaultCloud,
+		SplitByDimensions:                 to.Ptr(defaultSplitByDimensions),
 	}
 }
 
