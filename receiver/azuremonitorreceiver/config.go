@@ -229,6 +229,11 @@ var (
 	}
 )
 
+type DimensionsConfig struct {
+	Enabled   *bool                          `mapstructure:"enabled"`
+	Overrides map[string]map[string][]string `mapstructure:"overrides"`
+}
+
 // Config defines the configuration for the various elements of the receiver agent.
 type Config struct {
 	scraperhelper.ControllerConfig    `mapstructure:",squash"`
@@ -251,7 +256,7 @@ type Config struct {
 	UseBatchAPI                       bool                          `mapstructure:"use_batch_api"`
 	DiscoverSubscription              bool                          `mapstructure:"discover_subscriptions"`
 	Region                            string                        `mapstructure:"region"`
-	SplitByDimensions                 *bool                         `mapstructure:"split_by_dimensions"`
+	Dimensions                        DimensionsConfig              `mapstructure:"dimensions"`
 }
 
 const (
