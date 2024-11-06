@@ -418,28 +418,22 @@ func (s *azureBatchScraper) getBatchMetricsValues(ctx context.Context, subscript
 						zap.String("interval", compositeKey.timeGrain),
 					)
 
+					opts := newQueryResourcesOptions(
+						compositeKey.dimensions,
+						compositeKey.timeGrain,
+						startTime,
+						now,
+						s.cfg.MaximumNumberOfDimensionsInACall,
+						*s.cfg.SplitByDimensions,
+					)
+
 					response, err := clientMetrics.QueryResources(
 						ctx,
 						*subscription.SubscriptionID,
 						resourceType,
 						metricsByGrain.metrics[start:end],
 						azmetrics.ResourceIDList{ResourceIDs: resType.resourceIDs[startResources:endResources]},
-						&azmetrics.QueryResourcesOptions{
-							Aggregation: to.Ptr(strings.Join(
-								[]string{
-									string(armmonitor.AggregationTypeAverage),
-									string(armmonitor.AggregationTypeMaximum),
-									string(armmonitor.AggregationTypeMinimum),
-									string(armmonitor.AggregationTypeTotal),
-									string(armmonitor.AggregationTypeCount),
-								},
-								",",
-							)),
-							StartTime: to.Ptr(startTime.Format(time.RFC3339)),
-							EndTime:   to.Ptr(now.Format(time.RFC3339)),
-							Interval:  to.Ptr(compositeKey.timeGrain),
-							Top:       to.Ptr(int32(s.cfg.MaximumNumberOfDimensionsInACall)), // Defaults to 10 (may be limiting results)
-						},
+						&opts,
 					)
 
 					if err != nil {
@@ -450,6 +444,8 @@ func (s *azureBatchScraper) getBatchMetricsValues(ctx context.Context, subscript
 						s.settings.Logger.Error("failed to get Azure Metrics values data", zap.String("subscription", *subscription.SubscriptionID), zap.String("region", region), zap.String("resourceType", resourceType), zap.Any("metrics", metricsByGrain.metrics[start:end]), zap.Any("resources", resType.resourceIDs[startResources:endResources]), zap.Any("response", response), zap.Any("responseError", respErr))
 						break
 					}
+
+					s.settings.Logger.Debug("response", zap.Any("raw", response))
 
 					for _, metricValues := range response.Values {
 						for _, metric := range metricValues.Values {
@@ -497,6 +493,38 @@ func (s *azureBatchScraper) getBatchMetricsValues(ctx context.Context, subscript
 	}
 }
 
+// newQueryResourcesOptions builds the options to make the QueryResources request.
+func newQueryResourcesOptions(
+	dimensionsStr string,
+	timeGrain string,
+	start time.Time,
+	end time.Time,
+	top int32,
+	splitByDimensions bool,
+) azmetrics.QueryResourcesOptions {
+	var filter *string
+	if splitByDimensions {
+		filter = newMetricsQueryFilterFromDimensions(strings.Split(dimensionsStr, ","))
+	}
+	return azmetrics.QueryResourcesOptions{
+		Aggregation: to.Ptr(strings.Join(
+			[]string{
+				string(armmonitor.AggregationTypeAverage),
+				string(armmonitor.AggregationTypeMaximum),
+				string(armmonitor.AggregationTypeMinimum),
+				string(armmonitor.AggregationTypeTotal),
+				string(armmonitor.AggregationTypeCount),
+			},
+			",",
+		)),
+		StartTime: to.Ptr(start.Format(time.RFC3339)),
+		EndTime:   to.Ptr(end.Format(time.RFC3339)),
+		Interval:  to.Ptr(timeGrain),
+		Top:       to.Ptr(top), // Defaults to 10 (may be limiting results)
+		Filter:    filter,
+	}
+}
+
 func (s *azureBatchScraper) processQueryTimeseriesData(
 	resourceID string,
 	metric azmetrics.Metric,
@@ -531,4 +559,15 @@ func (s *azureBatchScraper) processQueryTimeseriesData(
 			)
 		}
 	}
+}
+
+// newMetricsQueryFilterFromDimensions build a filter query option from dimensions list.
+// This build a filter like that "dim1 eq '*' and dim2 eq '*' ...", which is ensuring
+// that the result will be split by the given dimensions.
+// TODO: use it in scrape.go (func getResourceMetricsValuesRequestOptions) as it's the same behavior
+func newMetricsQueryFilterFromDimensions(dimensions []string) *string {
+	if len(dimensions) == 0 {
+		return nil
+	}
+	return to.Ptr(strings.Join(dimensions, " eq '*' and ") + " eq '*'")
 }

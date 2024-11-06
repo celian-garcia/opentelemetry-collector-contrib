@@ -396,6 +396,7 @@ func (s *azureScraper) getResourceMetricsValues(ctx context.Context, resourceID 
 				start,
 				end,
 				s.cfg.MaximumNumberOfRecordsPerResource,
+				*s.cfg.SplitByDimensions,
 			)
 			start = end
 
@@ -445,6 +446,7 @@ func getResourceMetricsValuesRequestOptions(
 	start int,
 	end int,
 	top int32,
+	splitByDimensions bool,
 ) armmonitor.MetricsClientListOptions {
 	resType := strings.Join(metrics[start:end], ",")
 	filter := armmonitor.MetricsClientListOptions{
@@ -455,7 +457,7 @@ func getResourceMetricsValuesRequestOptions(
 		Top:         to.Ptr(top),
 	}
 
-	if len(dimensionsStr) > 0 {
+	if splitByDimensions && len(dimensionsStr) > 0 {
 		var dimensionsFilter bytes.Buffer
 		dimensions := strings.Split(dimensionsStr, ",")
 		for i, dimension := range dimensions {
