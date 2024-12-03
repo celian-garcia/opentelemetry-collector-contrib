@@ -503,7 +503,7 @@ func newQueryResourcesOptions(
 	splitByDimensions bool,
 ) azmetrics.QueryResourcesOptions {
 	var filter *string
-	if splitByDimensions {
+	if splitByDimensions && len(dimensionsStr) > 0 {
 		filter = newMetricsQueryFilterFromDimensions(strings.Split(dimensionsStr, ","))
 	}
 	return azmetrics.QueryResourcesOptions{
