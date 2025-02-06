@@ -31,14 +31,14 @@ func TestComponentLifecycle(t *testing.T) {
 	factory := NewFactory()
 
 	tests := []struct {
-		name     string
 		createFn func(ctx context.Context, set exporter.Settings, cfg component.Config) (component.Component, error)
+		name     string
 	}{
 
 		{
 			name: "traces",
 			createFn: func(ctx context.Context, set exporter.Settings, cfg component.Config) (component.Component, error) {
-				return factory.CreateTracesExporter(ctx, set, cfg)
+				return factory.CreateTraces(ctx, set, cfg)
 			},
 		},
 	}

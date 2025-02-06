@@ -215,7 +215,7 @@ func TestReceiverContentTypes(t *testing.T) {
 			}
 			require.NoError(t, err)
 
-			r := httptest.NewRequest("POST", test.endpoint, requestBody)
+			r := httptest.NewRequest(http.MethodPost, test.endpoint, requestBody)
 			r.Header.Add("content-type", test.content)
 			r.Header.Add("content-encoding", test.encoding)
 
@@ -243,7 +243,7 @@ func TestReceiverContentTypes(t *testing.T) {
 func TestReceiverInvalidContentType(t *testing.T) {
 	body := `{ invalid json `
 
-	r := httptest.NewRequest("POST", "/api/v2/spans",
+	r := httptest.NewRequest(http.MethodPost, "/api/v2/spans",
 		bytes.NewBuffer([]byte(body)))
 	r.Header.Add("content-type", "application/json")
 
@@ -266,7 +266,7 @@ func TestReceiverConsumerError(t *testing.T) {
 	body, err := os.ReadFile(zipkinV2Single)
 	require.NoError(t, err)
 
-	r := httptest.NewRequest("POST", "/api/v2/spans", bytes.NewBuffer(body))
+	r := httptest.NewRequest(http.MethodPost, "/api/v2/spans", bytes.NewBuffer(body))
 	r.Header.Add("content-type", "application/json")
 
 	cfg := &Config{
@@ -288,7 +288,7 @@ func TestReceiverConsumerPermanentError(t *testing.T) {
 	body, err := os.ReadFile(zipkinV2Single)
 	require.NoError(t, err)
 
-	r := httptest.NewRequest("POST", "/api/v2/spans", bytes.NewBuffer(body))
+	r := httptest.NewRequest(http.MethodPost, "/api/v2/spans", bytes.NewBuffer(body))
 	r.Header.Add("content-type", "application/json")
 
 	cfg := &Config{
@@ -358,7 +358,7 @@ func compressZlib(body []byte) (*bytes.Buffer, error) {
 	return &buf, nil
 }
 
-func TestConvertSpansToTraceSpans_JSONWithoutSerivceName(t *testing.T) {
+func TestConvertSpansToTraceSpans_JSONWithoutServiceName(t *testing.T) {
 	blob, err := os.ReadFile("./testdata/sample2.json")
 	require.NoError(t, err, "Failed to read sample JSON file: %v", err)
 	zi := newTestZipkinReceiver()
@@ -413,7 +413,7 @@ func TestReceiverConvertsStringsToTypes(t *testing.T) {
 	body, err := os.ReadFile(zipkinV2Single)
 	require.NoError(t, err, "Failed to read sample JSON file: %v", err)
 
-	r := httptest.NewRequest("POST", "/api/v2/spans", bytes.NewBuffer(body))
+	r := httptest.NewRequest(http.MethodPost, "/api/v2/spans", bytes.NewBuffer(body))
 	r.Header.Add("content-type", "application/json")
 
 	next := new(consumertest.TracesSink)

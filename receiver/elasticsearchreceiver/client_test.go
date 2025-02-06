@@ -595,7 +595,7 @@ type mockServer struct {
 
 type mockServerOption func(*mockServer)
 
-func withBasicAuth(username, password string) mockServerOption { // nolint:unparam
+func withBasicAuth(username, password string) mockServerOption { //nolint:unparam
 	return func(m *mockServer) {
 		m.auth = func(u, p string) bool {
 			return u == username && p == password
@@ -628,28 +628,28 @@ func newMockServer(t *testing.T, opts ...mockServerOption) *httptest.Server {
 		if mock.auth != nil {
 			username, password, ok := req.BasicAuth()
 			if !ok {
-				rw.WriteHeader(401)
+				rw.WriteHeader(http.StatusUnauthorized)
 				return
 			} else if !mock.auth(username, password) {
-				rw.WriteHeader(403)
+				rw.WriteHeader(http.StatusForbidden)
 				return
 			}
 		}
 		if req.URL.Path == "/" {
-			rw.WriteHeader(200)
+			rw.WriteHeader(http.StatusOK)
 			_, err := rw.Write(mock.metadata)
 			assert.NoError(t, err)
 			return
 		}
 		for prefix, payload := range mock.prefixes {
 			if strings.HasPrefix(req.URL.Path, prefix) {
-				rw.WriteHeader(200)
+				rw.WriteHeader(http.StatusOK)
 				_, err := rw.Write(payload)
 				assert.NoError(t, err)
 				return
 			}
 		}
-		rw.WriteHeader(404)
+		rw.WriteHeader(http.StatusNotFound)
 	}))
 
 	return elasticsearchMock

@@ -8,12 +8,13 @@ import (
 	"errors"
 	"time"
 
-	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/consumer"
 	"go.opentelemetry.io/collector/receiver"
-	"go.opentelemetry.io/collector/receiver/scraperhelper"
+	"go.opentelemetry.io/collector/scraper"
+	"go.opentelemetry.io/collector/scraper/scraperhelper"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/azuremonitorreceiver/internal/metadata"
 )
 
@@ -58,18 +59,17 @@ func createMetricsReceiver(_ context.Context, params receiver.Settings, rConf co
 		return nil, errConfigNotAzureMonitor
 	}
 
-	var scraper scraperhelper.Scraper
+	var metrics scraper.Metrics
 	var err error
 	if cfg.UseBatchAPI {
 		azureBatchScraper := newBatchScraper(cfg, params)
-		scraper, err = scraperhelper.NewScraper(metadata.Type, azureBatchScraper.scrape, scraperhelper.WithStart(azureBatchScraper.start))
+		metrics, err = scraper.NewMetrics(azureBatchScraper.scrape, scraper.WithStart(azureBatchScraper.start))
 	} else {
 		azureScraper := newScraper(cfg, params)
-		scraper, err = scraperhelper.NewScraper(metadata.Type, azureScraper.scrape, scraperhelper.WithStart(azureScraper.start))
+		metrics, err = scraper.NewMetrics(azureScraper.scrape, scraper.WithStart(azureScraper.start))
 	}
 	if err != nil {
 		return nil, err
 	}
-
-	return scraperhelper.NewScraperControllerReceiver(&cfg.ControllerConfig, params, consumer, scraperhelper.AddScraper(scraper))
+	return scraperhelper.NewMetricsController(&cfg.ControllerConfig, params, consumer, scraperhelper.AddScraper(metadata.Type, metrics))
 }

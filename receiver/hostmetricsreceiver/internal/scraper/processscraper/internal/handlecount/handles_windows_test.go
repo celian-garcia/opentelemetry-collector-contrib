@@ -7,7 +7,6 @@ package handlecount
 
 import (
 	"errors"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -33,19 +32,19 @@ func TestHandleCountManager(t *testing.T) {
 
 	_, err = m.GetProcessHandleCount(3)
 	assert.ErrorIs(t, errors.Unwrap(err), ErrNoHandleCountForProcess)
-	assert.True(t, strings.Contains(err.Error(), "3"))
+	assert.Contains(t, err.Error(), "3")
 }
 
-type mockQueryer struct {
+type mockQuerier struct {
 	info map[int64]uint32
 }
 
-func (s mockQueryer) queryProcessHandleCounts() (map[int64]uint32, error) {
+func (s mockQuerier) queryProcessHandleCounts() (map[int64]uint32, error) {
 	return s.info, nil
 }
 
 func deterministicManagerWithInfo(info map[int64]uint32) *handleCountManager {
 	return &handleCountManager{
-		queryer: mockQueryer{info: info},
+		querier: mockQuerier{info: info},
 	}
 }

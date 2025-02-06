@@ -21,8 +21,6 @@ func TestLoadConfig(t *testing.T) {
 
 	factory := NewFactory()
 	factories.Receivers[metadata.Type] = factory
-	// https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/33594
-	// nolint:staticcheck
 	cfg, err := otelcoltest.LoadConfigAndValidate(filepath.Join("testdata", "config.yaml"), factories)
 
 	require.NoError(t, err)
@@ -35,12 +33,14 @@ func TestLoadConfig(t *testing.T) {
 	assert.Equal(t, "", r0.(*Config).Offset)
 	assert.Equal(t, "", r0.(*Config).Partition)
 	assert.Equal(t, defaultLogFormat, logFormat(r0.(*Config).Format))
+	assert.False(t, r0.(*Config).ApplySemanticConventions)
 
 	r1 := cfg.Receivers[component.NewIDWithName(metadata.Type, "all")]
 	assert.Equal(t, "Endpoint=sb://namespace.servicebus.windows.net/;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=superSecret1234=;EntityPath=hubName", r1.(*Config).Connection)
 	assert.Equal(t, "1234-5566", r1.(*Config).Offset)
 	assert.Equal(t, "foo", r1.(*Config).Partition)
 	assert.Equal(t, rawLogFormat, logFormat(r1.(*Config).Format))
+	assert.True(t, r1.(*Config).ApplySemanticConventions)
 }
 
 func TestMissingConnection(t *testing.T) {

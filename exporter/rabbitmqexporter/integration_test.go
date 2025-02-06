@@ -8,7 +8,7 @@ package rabbitmqexporter
 import (
 	"context"
 	"fmt"
-	"math/rand"
+	"math/rand/v2"
 	"strconv"
 	"testing"
 	"time"
@@ -62,7 +62,7 @@ func TestExportWithNetworkIssueRecovery(t *testing.T) {
 			cfg.Connection.Endpoint = endpoint
 			cfg.Connection.VHost = vhost
 			cfg.Connection.Auth = AuthConfig{Plain: PlainAuth{Username: username, Password: password}}
-			exporter, err := factory.CreateLogsExporter(context.Background(), exportertest.NewNopSettings(), cfg)
+			exporter, err := factory.CreateLogs(context.Background(), exportertest.NewNopSettings(), cfg)
 			require.NoError(t, err)
 			err = exporter.Start(context.Background(), componenttest.NewNopHost())
 			require.NoError(t, err)
@@ -166,7 +166,5 @@ func setupQueueConsumer(t *testing.T, queueName string, endpoint string) (*amqp.
 }
 
 func randPort() string {
-	rs := rand.NewSource(time.Now().Unix())
-	r := rand.New(rs)
-	return strconv.Itoa(r.Intn(999) + 9000)
+	return strconv.Itoa(rand.IntN(999) + 9000)
 }

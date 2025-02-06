@@ -21,7 +21,7 @@ import (
 )
 
 func TestComponentFactoryType(t *testing.T) {
-	require.Equal(t, "experimental_metricsgeneration", NewFactory().Type().String())
+	require.Equal(t, "metricsgeneration", NewFactory().Type().String())
 }
 
 func TestComponentConfigStruct(t *testing.T) {
@@ -32,8 +32,8 @@ func TestComponentLifecycle(t *testing.T) {
 	factory := NewFactory()
 
 	tests := []struct {
-		name     string
 		createFn func(ctx context.Context, set processor.Settings, cfg component.Config) (component.Component, error)
+		name     string
 	}{
 
 		{

@@ -65,7 +65,6 @@ func armMonitorMetricsClientFuncMock(string, azcore.TokenCredential, *arm.Client
 }
 
 func TestAzureScraperStart(t *testing.T) {
-
 	cfg := createDefaultConfig().(*Config)
 
 	tests := []struct {
@@ -345,7 +344,6 @@ func TestAzureScraperScrape(t *testing.T) {
 				pmetrictest.IgnoreMetricsOrder(),
 			))
 		})
-
 	}
 }
 

@@ -8,7 +8,6 @@ OTEL_STABLE_VERSION=main
 VERSION=$(shell git describe --always --match "v[0-9]*" HEAD)
 TRIMMED_VERSION=$(shell grep -o 'v[^-]*' <<< "$(VERSION)" | cut -c 2-)
 CORE_VERSIONS=$(SRC_PARENT_DIR)/opentelemetry-collector/versions.yaml
-GOMOD=$(SRC_ROOT)/cmd/otelcontribcol/go.mod
 
 COMP_REL_PATH=cmd/otelcontribcol/components.go
 MOD_NAME=github.com/open-telemetry/opentelemetry-collector-contrib
@@ -51,6 +50,7 @@ CMD_MODS_1 := $(shell find ./cmd/[n-z]* $(FIND_MOD_ARGS) -not -path "./cmd/otel*
 CMD_MODS := $(CMD_MODS_0) $(CMD_MODS_1)
 OTHER_MODS := $(shell find . $(EX_COMPONENTS) $(EX_INTERNAL) $(EX_PKG) $(EX_CMD) $(FIND_MOD_ARGS) -exec $(TO_MOD_DIR) ) $(PWD)
 ALL_MODS := $(RECEIVER_MODS) $(PROCESSOR_MODS) $(EXPORTER_MODS) $(EXTENSION_MODS) $(CONNECTOR_MODS) $(INTERNAL_MODS) $(PKG_MODS) $(CMD_MODS) $(OTHER_MODS)
+CGO_MODS := ./receiver/hostmetricsreceiver
 
 FIND_INTEGRATION_TEST_MODS={ find . -type f -name "*integration_test.go" & find . -type f -name "*e2e_test.go" -not -path "./testbed/*"; }
 INTEGRATION_MODS := $(shell $(FIND_INTEGRATION_TEST_MODS) | xargs $(TO_MOD_DIR) | uniq)
@@ -134,6 +134,14 @@ gotest:
 gotest-with-cover:
 	@$(MAKE) $(FOR_GROUP_TARGET) TARGET="test-with-cover"
 	$(GOCMD) tool covdata textfmt -i=./coverage/unit -o ./$(GROUP)-coverage.txt
+
+.PHONY: gobuildtest
+gobuildtest:
+	$(MAKE) $(FOR_GROUP_TARGET) TARGET="buildtest"
+
+.PHONY: gorunbuilttest
+gorunbuilttest:
+	$(MAKE) $(FOR_GROUP_TARGET) TARGET="runbuilttest"
 
 .PHONY: gointegration-test
 gointegration-test:
@@ -260,6 +268,9 @@ for-other-target: $(OTHER_MODS)
 .PHONY: for-integration-target
 for-integration-target: $(INTEGRATION_MODS)
 
+.PHONY: for-cgo-target
+for-cgo-target: $(CGO_MODS)
+
 # Debugging target, which helps to quickly determine whether for-all-target is working or not.
 .PHONY: all-pwd
 all-pwd:
@@ -295,24 +306,19 @@ docker-telemetrygen:
 
 .PHONY: generate
 generate: install-tools
-	cd ./internal/tools && go install go.opentelemetry.io/collector/cmd/mdatagen
-	$(MAKE) for-all CMD="$(GOCMD) generate ./..."
+	PATH="$$PWD/.tools:$$PATH" $(MAKE) for-all CMD="$(GOCMD) generate ./..."
 	$(MAKE) gofmt
 
-.PHONY: githubgen-install
-githubgen-install:
-	cd cmd/githubgen && $(GOCMD) install .
-
 .PHONY: gengithub
-gengithub: githubgen-install
-	githubgen
+gengithub: $(GITHUBGEN)
+	$(GITHUBGEN)
 
 .PHONY: gendistributions
-gendistributions: githubgen-install
-	githubgen distributions
+gendistributions: $(GITHUBGEN)
+	$(GITHUBGEN) distributions
 
 .PHONY: update-codeowners
-update-codeowners: gengithub generate
+update-codeowners: generate gengithub
 
 FILENAME?=$(shell git branch --show-current)
 .PHONY: chlog-new
@@ -333,7 +339,8 @@ chlog-update: $(CHLOGGEN)
 
 .PHONY: genotelcontribcol
 genotelcontribcol: $(BUILDER)
-	$(BUILDER) --skip-compilation --config cmd/otelcontribcol/builder-config.yaml --output-path cmd/otelcontribcol
+	./internal/buildscripts/ocb-add-replaces.sh otelcontribcol
+	$(BUILDER) --skip-compilation --config cmd/otelcontribcol/builder-config-replaced.yaml
 
 # Build the Collector executable.
 .PHONY: otelcontribcol
@@ -349,7 +356,8 @@ otelcontribcollite: genotelcontribcol
 
 .PHONY: genoteltestbedcol
 genoteltestbedcol: $(BUILDER)
-	$(BUILDER) --skip-compilation --config cmd/oteltestbedcol/builder-config.yaml --output-path cmd/oteltestbedcol
+	./internal/buildscripts/ocb-add-replaces.sh oteltestbedcol
+	$(BUILDER) --skip-compilation --config cmd/oteltestbedcol/builder-config-replaced.yaml
 
 # Build the Collector executable, with only components used in testbed.
 .PHONY: oteltestbedcol
@@ -374,7 +382,7 @@ telemetrygenlite:
 		-tags $(GO_BUILD_TAGS) -ldflags $(GO_BUILD_LDFLAGS) .
 
 # helper function to update the core packages in builder-config.yaml
-# input parameters are 
+# input parameters are
 # $(1) = path/to/versions.yaml (where it greps the relevant packages)
 # $(2) = path/to/go.mod (where it greps the package-versions)
 # $(3) = path/to/builder-config.yaml (where we want to update the versions)
@@ -383,16 +391,16 @@ define updatehelper
 			echo "Usage: updatehelper <versions.yaml> <go.mod> <builder-config.yaml>"; \
 			exit 1; \
 	fi
-	grep "go\.opentelemetry\.io" $(1) | sed 's/^\s*-\s*//' | while IFS= read -r line; do \
+	grep "go\.opentelemetry\.io" $(1) | sed 's/^[[:space:]]*-[[:space:]]*//' | while IFS= read -r line; do \
 			if grep -qF "$$line" $(2); then \
 					package=$$(grep -F "$$line" $(2) | head -n 1 | awk '{print $$1}'); \
 					version=$$(grep -F "$$line" $(2) | head -n 1 | awk '{print $$2}'); \
 					builder_package=$$(grep -F "$$package" $(3) | awk '{print $$3}'); \
 					builder_version=$$(grep -F "$$package" $(3) | awk '{print $$4}'); \
 					if [ "$$builder_package" == "$$package" ]; then \
-						echo "$$builder_version";\
-						sed -i -e "s|$$builder_package.*$$builder_version|$$builder_package $$version|" $(3); \
-						echo "[$(3)]: $$package updated to $$version"; \
+						sed -i.bak -e "s|$$builder_package.*$$builder_version|$$builder_package $$version|" $(3); \
+						rm $(3).bak; \
+						echo "[$(3)]: $$package updated from $$builder_version to $$version"; \
 					fi; \
 			fi; \
 	done
@@ -406,12 +414,20 @@ update-otel:$(MULTIMOD)
 	$(MULTIMOD) sync -s=true -o ../opentelemetry-collector -m beta --commit-hash $(OTEL_VERSION)
 	git add . && git commit -s -m "[chore] multimod update beta modules" ; \
 	$(MAKE) gotidy
-	$(call updatehelper,$(CORE_VERSIONS),$(GOMOD),./cmd/otelcontribcol/builder-config.yaml)
-	$(call updatehelper,$(CORE_VERSIONS),$(GOMOD),./cmd/oteltestbedcol/builder-config.yaml)
+	# Ensure the otelcontribcol is generated, update deps, then
 	$(MAKE) genotelcontribcol
+	$(call updatehelper,$(CORE_VERSIONS),./cmd/otelcontribcol/go.mod,./cmd/otelcontribcol/builder-config.yaml)
+	$(MAKE) genotelcontribcol
+	# Ensure the otelcontribcol is generated.
 	$(MAKE) genoteltestbedcol
-	$(MAKE) oteltestbedcol
+	$(call updatehelper,$(CORE_VERSIONS),./cmd/oteltestbedcol/go.mod,./cmd/oteltestbedcol/builder-config.yaml)
+	$(MAKE) genoteltestbedcol
+	$(MAKE) generate
+	$(MAKE) crosslink
+	# Tidy again after generating code
+	$(MAKE) gotidy
 	$(MAKE) remove-toolchain
+	git add . && git commit -s -m "[chore] mod and toolchain tidy" ; \
 
 .PHONY: otel-from-tree
 otel-from-tree:
@@ -539,11 +555,12 @@ clean:
 	find . -type f -name 'coverage.out' -delete
 	find . -type f -name 'integration-coverage.txt' -delete
 	find . -type f -name 'integration-coverage.html' -delete
+	@echo "Removing built binary files"
+	find . -type f -name 'builtunitetest.test' -delete
 
 .PHONY: generate-gh-issue-templates
 generate-gh-issue-templates:
-	cd cmd/githubgen && $(GOCMD) install .
-	githubgen issue-templates
+	$(GITHUBGEN) issue-templates
 
 .PHONY: checks
 checks:
