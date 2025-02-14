@@ -8,15 +8,9 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"sort"
 	"strings"
 	"sync"
 	"time"
-
-	"go.opentelemetry.io/collector/component"
-	"go.opentelemetry.io/collector/pdata/pcommon"
-	"go.opentelemetry.io/collector/pdata/pmetric"
-	"go.opentelemetry.io/collector/receiver"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/arm"
@@ -28,6 +22,10 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/monitor/armmonitor"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resources/armresources"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resources/armsubscriptions"
+	"go.opentelemetry.io/collector/component"
+	"go.opentelemetry.io/collector/pdata/pcommon"
+	"go.opentelemetry.io/collector/pdata/pmetric"
+	"go.opentelemetry.io/collector/receiver"
 	"go.uber.org/zap"
 
 	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/azuremonitorreceiver/internal/metadata"
@@ -214,9 +212,7 @@ func (s *azureBatchScraper) scrape(ctx context.Context) (pmetric.Metrics, error)
 
 			wg2.Wait()
 		}(subscription)
-
 	}
-
 	wg.Wait()
 	return s.mb.Emit(), nil
 }
@@ -268,7 +264,6 @@ func (s *azureBatchScraper) getResources(ctx context.Context, subscriptionID str
 		}
 
 		for _, resource := range nextResult.Value {
-
 			if _, ok := s.resources[subscriptionID][*resource.ID]; !ok {
 				resourceGroup := getResourceGroupFromID(*resource.ID)
 				attributes := map[string]*string{
@@ -326,7 +321,6 @@ func (s *azureBatchScraper) getResourcesFilter() string {
 }
 
 func (s *azureBatchScraper) getResourceMetricsDefinitionsByType(ctx context.Context, subscription *armsubscriptions.Subscription, resourceType string) {
-
 	if time.Since(s.resourceTypes[*subscription.SubscriptionID][resourceType].metricsDefinitionsUpdated).Seconds() < s.cfg.CacheResourcesDefinitions {
 		return
 	}
@@ -350,20 +344,13 @@ func (s *azureBatchScraper) getResourceMetricsDefinitionsByType(ctx context.Cont
 		for _, v := range nextResult.Value {
 			s.settings.Logger.Info("getResourceMetricsDefinitionsByType", zap.String("resourceType", resourceType), zap.Any("v", v))
 			timeGrain := *v.MetricAvailabilities[0].TimeGrain
-			name := *v.Name.Value
-			compositeKey := metricsCompositeKey{timeGrain: timeGrain}
-
-			if len(v.Dimensions) > 0 {
-				var dimensionsSlice []string
-				for _, dimension := range v.Dimensions {
-					if len(strings.TrimSpace(*dimension.Value)) > 0 {
-						dimensionsSlice = append(dimensionsSlice, *dimension.Value)
-					}
-				}
-				sort.Strings(dimensionsSlice)
-				compositeKey.dimensions = strings.Join(dimensionsSlice, ",")
+			metricName := *v.Name.Value
+			dimensions := filterDimensions(v.Dimensions, s.cfg.Dimensions, *s.resourceTypes[*subscription.SubscriptionID][resourceType].name, metricName)
+			compositeKey := metricsCompositeKey{
+				timeGrain:  timeGrain,
+				dimensions: serializeDimensions(dimensions),
 			}
-			s.storeMetricsDefinitionByType(*subscription.SubscriptionID, resourceType, name, compositeKey)
+			s.storeMetricsDefinitionByType(*subscription.SubscriptionID, resourceType, metricName, compositeKey)
 		}
 	}
 	s.resourceTypes[*subscription.SubscriptionID][resourceType].metricsDefinitionsUpdated = time.Now()
@@ -392,7 +379,6 @@ func (s *azureBatchScraper) getBatchMetricsValues(ctx context.Context, subscript
 
 			start := 0
 			for start < len(metricsByGrain.metrics) {
-
 				end := start + s.cfg.MaximumNumberOfMetricsInACall
 				if end > len(metricsByGrain.metrics) {
 					end = len(metricsByGrain.metrics)
@@ -425,7 +411,6 @@ func (s *azureBatchScraper) getBatchMetricsValues(ctx context.Context, subscript
 						startTime,
 						now,
 						s.cfg.MaximumNumberOfDimensionsInACall,
-						*s.cfg.SplitByDimensions,
 					)
 
 					response, err := clientMetrics.QueryResources(
@@ -436,7 +421,6 @@ func (s *azureBatchScraper) getBatchMetricsValues(ctx context.Context, subscript
 						azmetrics.ResourceIDList{ResourceIDs: resType.resourceIDs[startResources:endResources]},
 						&opts,
 					)
-
 					if err != nil {
 						var respErr *azcore.ResponseError
 						if errors.As(err, &respErr) {
@@ -450,7 +434,6 @@ func (s *azureBatchScraper) getBatchMetricsValues(ctx context.Context, subscript
 
 					for _, metricValues := range response.Values {
 						for _, metric := range metricValues.Values {
-
 							for _, timeseriesElement := range metric.TimeSeries {
 								if timeseriesElement.Data != nil {
 									if metricValues.ResourceID != nil {
@@ -501,12 +484,7 @@ func newQueryResourcesOptions(
 	start time.Time,
 	end time.Time,
 	top int32,
-	splitByDimensions bool,
 ) azmetrics.QueryResourcesOptions {
-	var filter *string
-	if splitByDimensions && len(dimensionsStr) > 0 {
-		filter = newMetricsQueryFilterFromDimensions(strings.Split(dimensionsStr, ","))
-	}
 	return azmetrics.QueryResourcesOptions{
 		Aggregation: to.Ptr(strings.Join(
 			[]string{
@@ -522,7 +500,7 @@ func newQueryResourcesOptions(
 		EndTime:   to.Ptr(end.Format(time.RFC3339)),
 		Interval:  to.Ptr(timeGrain),
 		Top:       to.Ptr(top), // Defaults to 10 (may be limiting results)
-		Filter:    filter,
+		Filter:    buildDimensionsFilter(dimensionsStr),
 	}
 }
 

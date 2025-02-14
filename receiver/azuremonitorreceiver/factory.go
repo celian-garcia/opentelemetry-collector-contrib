@@ -14,7 +14,6 @@ import (
 	"go.opentelemetry.io/collector/scraper"
 	"go.opentelemetry.io/collector/scraper/scraperhelper"
 
-	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/azuremonitorreceiver/internal/metadata"
 )
 
@@ -49,7 +48,6 @@ func createDefaultConfig() component.Config {
 		Services:                          monitorServices,
 		Authentication:                    servicePrincipal,
 		Cloud:                             defaultCloud,
-		SplitByDimensions:                 to.Ptr(defaultSplitByDimensions),
 	}
 }
 

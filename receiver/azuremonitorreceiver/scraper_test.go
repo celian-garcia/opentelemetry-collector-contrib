@@ -15,7 +15,6 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/arm"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/cloud"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/runtime"
-	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/monitor/armmonitor"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resources/armresources"
@@ -102,7 +101,6 @@ func TestAzureScraperStart(t *testing.T) {
 					MaximumNumberOfMetricsInACall: 20,
 					Services:                      monitorServices,
 					Authentication:                servicePrincipal,
-					SplitByDimensions:             to.Ptr(defaultSplitByDimensions),
 				}
 				s := &azureScraper{
 					cfg:                             customCfg,
@@ -131,7 +129,6 @@ func TestAzureScraperStart(t *testing.T) {
 					MaximumNumberOfMetricsInACall: 20,
 					Services:                      monitorServices,
 					Authentication:                workloadIdentity,
-					SplitByDimensions:             to.Ptr(defaultSplitByDimensions),
 				}
 				s := &azureScraper{
 					cfg:                             customCfg,
@@ -160,7 +157,6 @@ func TestAzureScraperStart(t *testing.T) {
 					MaximumNumberOfMetricsInACall: 20,
 					Services:                      monitorServices,
 					Authentication:                managedIdentity,
-					SplitByDimensions:             to.Ptr(defaultSplitByDimensions),
 				}
 				s := &azureScraper{
 					cfg:                             customCfg,
@@ -189,7 +185,6 @@ func TestAzureScraperStart(t *testing.T) {
 					MaximumNumberOfMetricsInACall: 20,
 					Services:                      monitorServices,
 					Authentication:                defaultCredentials,
-					SplitByDimensions:             to.Ptr(defaultSplitByDimensions),
 				}
 				s := &azureScraper{
 					cfg:                             customCfg,
@@ -741,8 +736,7 @@ func TestAzureScraperClientOptions(t *testing.T) {
 			name: "AzureCloud_options",
 			fields: fields{
 				cfg: &Config{
-					Cloud:             azureCloud,
-					SplitByDimensions: to.Ptr(defaultSplitByDimensions),
+					Cloud: azureCloud,
 				},
 			},
 			want: &arm.ClientOptions{
@@ -755,8 +749,7 @@ func TestAzureScraperClientOptions(t *testing.T) {
 			name: "AzureGovernmentCloud_options",
 			fields: fields{
 				cfg: &Config{
-					Cloud:             azureGovernmentCloud,
-					SplitByDimensions: to.Ptr(defaultSplitByDimensions),
+					Cloud: azureGovernmentCloud,
 				},
 			},
 			want: &arm.ClientOptions{
@@ -769,8 +762,7 @@ func TestAzureScraperClientOptions(t *testing.T) {
 			name: "AzureChinaCloud_options",
 			fields: fields{
 				cfg: &Config{
-					Cloud:             azureChinaCloud,
-					SplitByDimensions: to.Ptr(defaultSplitByDimensions),
+					Cloud: azureChinaCloud,
 				},
 			},
 			want: &arm.ClientOptions{
