@@ -430,6 +430,7 @@ func (s *azureScraper) getResourceMetricsValues(ctx context.Context, subscriptio
 				metricsByGrain.metrics,
 				compositeKey.dimensions,
 				compositeKey.timeGrain,
+				compositeKey.aggregations,
 				start,
 				end,
 				s.cfg.MaximumNumberOfRecordsPerResource,

@@ -20,6 +20,7 @@ import (
 	azfake "github.com/Azure/azure-sdk-for-go/sdk/azcore/fake"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
+	"github.com/Azure/azure-sdk-for-go/sdk/monitor/query/azmetrics"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/monitor/armmonitor"
 	armmonitorfake "github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/monitor/armmonitor/fake"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resources/armresources/v2"
@@ -39,11 +40,12 @@ type mockClientOptionsResolver struct {
 	armResourcesClientOptions     map[string]*arm.ClientOptions
 	armSubscriptionsClientOptions *arm.ClientOptions
 	armMonitorClientOptions       *arm.ClientOptions
+	azmetricsClientOptions        *azmetrics.ClientOptions
 }
 
-// newMockClientOptionsResolver is an options resolver that will generate mocking client options for each Azure API.
+// newMockClientOptionsResolver is an armOptions resolver that will generate mocking client armOptions for each Azure API.
 // Indeed, the way to mock Azure API is to provide a fake server that will return the expected data.
-// The fake server is built with "fake" package from Azure SDK for Go, and is set in the client options, via the transport.
+// The fake server is built with "fake" package from Azure SDK for Go, and is set in the client armOptions, via the transport.
 // This ctor takes the mock data in that order:
 // - subscriptions
 // - resources stored by subscription ID
@@ -55,7 +57,7 @@ func newMockClientOptionsResolver(
 	metricsDefinitions map[string][]armmonitor.MetricDefinitionsClientListResponse,
 	metrics map[string]map[string]armmonitor.MetricsClientListResponse,
 ) ClientOptionsResolver {
-	// Init resources client options from resources mock data
+	// Init resources client armOptions from resources mock data
 	armResourcesClientOptions := make(map[string]*arm.ClientOptions)
 	for subID, pages := range resources {
 		resourceServer := armresourcesfake.Server{
@@ -68,7 +70,7 @@ func newMockClientOptionsResolver(
 		}
 	}
 
-	// Init subscriptions client options from subscriptions mock data
+	// Init subscriptions client armOptions from subscriptions mock data
 	subscriptionsServer := armsubscriptionsfake.Server{
 		NewListPager: newMockSubscriptionsListPager(subscriptions),
 	}
@@ -78,7 +80,7 @@ func newMockClientOptionsResolver(
 		},
 	}
 
-	// Init arm monitor client options from subscriptions mock data
+	// Init arm monitor client armOptions from subscriptions mock data
 	armMonitorServerFactory := armmonitorfake.ServerFactory{
 		MetricDefinitionsServer: armmonitorfake.MetricDefinitionsServer{
 			NewListPager: newMockMetricsDefinitionListPager(metricsDefinitions),
@@ -97,6 +99,7 @@ func newMockClientOptionsResolver(
 		armResourcesClientOptions:     armResourcesClientOptions,
 		armSubscriptionsClientOptions: armSubscriptionsClientOptions,
 		armMonitorClientOptions:       armMonitorClientOptions,
+		azmetricsClientOptions:        nil,
 	}
 }
 
@@ -110,6 +113,10 @@ func (m mockClientOptionsResolver) GetArmSubscriptionsClientOptions() *arm.Clien
 
 func (m mockClientOptionsResolver) GetArmMonitorClientOptions() *arm.ClientOptions {
 	return m.armMonitorClientOptions
+}
+
+func (m mockClientOptionsResolver) GetAzMetricsClientOptions() *azmetrics.ClientOptions {
+	return m.azmetricsClientOptions
 }
 
 func TestNewScraper(t *testing.T) {
