@@ -12,6 +12,9 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/collector/component/componenttest"
 	"go.opentelemetry.io/collector/exporter/exportertest"
+
+	"github.com/open-telemetry/opentelemetry-collector-contrib/exporter/kafkaexporter/internal/metadata"
+	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/kafka/configkafka"
 )
 
 // applyConfigOption is used to modify values of the
@@ -27,9 +30,8 @@ func TestCreateDefaultConfig(t *testing.T) {
 	cfg := createDefaultConfig().(*Config)
 	assert.NotNil(t, cfg, "failed to create default config")
 	assert.NoError(t, componenttest.CheckConfigStruct(cfg))
-	assert.Equal(t, []string{defaultBroker}, cfg.Brokers)
+	assert.Equal(t, configkafka.NewDefaultClientConfig(), cfg.ClientConfig)
 	assert.Equal(t, "", cfg.Topic)
-	assert.Equal(t, "sarama", cfg.ClientID)
 }
 
 func TestCreateMetricExporter(t *testing.T) {
@@ -79,7 +81,7 @@ func TestCreateMetricExporter(t *testing.T) {
 			f := NewFactory()
 			exporter, err := f.CreateMetrics(
 				context.Background(),
-				exportertest.NewNopSettings(),
+				exportertest.NewNopSettings(metadata.Type),
 				tc.conf,
 			)
 			require.NoError(t, err)
@@ -143,7 +145,7 @@ func TestCreateLogExporter(t *testing.T) {
 			f := NewFactory()
 			exporter, err := f.CreateLogs(
 				context.Background(),
-				exportertest.NewNopSettings(),
+				exportertest.NewNopSettings(metadata.Type),
 				tc.conf,
 			)
 			require.NoError(t, err)
@@ -207,7 +209,7 @@ func TestCreateTraceExporter(t *testing.T) {
 			f := NewFactory()
 			exporter, err := f.CreateTraces(
 				context.Background(),
-				exportertest.NewNopSettings(),
+				exportertest.NewNopSettings(metadata.Type),
 				tc.conf,
 			)
 			require.NoError(t, err)

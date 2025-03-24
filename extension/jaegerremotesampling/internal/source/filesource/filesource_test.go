@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jaegertracing/jaeger/proto-gen/api_v2"
+	"github.com/jaegertracing/jaeger-idl/proto-gen/api_v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -376,7 +376,7 @@ func TestDeepCopy(t *testing.T) {
 }
 
 func TestAutoUpdateStrategyWithFile(t *testing.T) {
-	tempFile, _ := os.CreateTemp("", "for_go_test_*.json")
+	tempFile, _ := os.CreateTemp(t.TempDir(), "for_go_test_*.json")
 	require.NoError(t, tempFile.Close())
 	defer func() {
 		require.NoError(t, os.Remove(tempFile.Name()))
@@ -462,7 +462,7 @@ func TestAutoUpdateStrategyWithURL(t *testing.T) {
 }
 
 func TestAutoUpdateStrategyErrors(t *testing.T) {
-	tempFile, _ := os.CreateTemp("", "for_go_test_*.json")
+	tempFile, _ := os.CreateTemp(t.TempDir(), "for_go_test_*.json")
 	require.NoError(t, tempFile.Close())
 	defer func() {
 		_ = os.Remove(tempFile.Name())

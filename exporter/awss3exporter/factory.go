@@ -28,13 +28,16 @@ func NewFactory() exporter.Factory {
 func createDefaultConfig() component.Config {
 	queueCfg := exporterhelper.NewDefaultQueueConfig()
 	queueCfg.Enabled = false
+	timeoutCfg := exporterhelper.NewDefaultTimeoutConfig()
 
 	return &Config{
-		QueueSettings: queueCfg,
+		QueueSettings:   queueCfg,
+		TimeoutSettings: timeoutCfg,
 		S3Uploader: S3UploaderConfig{
-			Region:       "us-east-1",
-			S3Partition:  "minute",
-			StorageClass: "STANDARD",
+			Region:            "us-east-1",
+			S3PartitionFormat: "year=%Y/month=%m/day=%d/hour=%H/minute=%M",
+			StorageClass:      "STANDARD",
+			ACL:               "private",
 		},
 		MarshalerName: "otlp_json",
 	}
@@ -56,6 +59,7 @@ func createLogsExporter(ctx context.Context,
 		s3Exporter.ConsumeLogs,
 		exporterhelper.WithStart(s3Exporter.start),
 		exporterhelper.WithQueue(cfg.QueueSettings),
+		exporterhelper.WithTimeout(cfg.TimeoutSettings),
 	)
 }
 
@@ -79,6 +83,7 @@ func createMetricsExporter(ctx context.Context,
 		s3Exporter.ConsumeMetrics,
 		exporterhelper.WithStart(s3Exporter.start),
 		exporterhelper.WithQueue(cfg.QueueSettings),
+		exporterhelper.WithTimeout(cfg.TimeoutSettings),
 	)
 }
 
@@ -103,6 +108,7 @@ func createTracesExporter(ctx context.Context,
 		s3Exporter.ConsumeTraces,
 		exporterhelper.WithStart(s3Exporter.start),
 		exporterhelper.WithQueue(cfg.QueueSettings),
+		exporterhelper.WithTimeout(cfg.TimeoutSettings),
 	)
 }
 

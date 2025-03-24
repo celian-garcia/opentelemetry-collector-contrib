@@ -101,6 +101,7 @@ func (s *splunkScraper) scrape(ctx context.Context) (pmetric.Metrics, error) {
 		s.scrapeIndexerAvgRate,
 		s.scrapeKVStoreStatus,
 		s.scrapeSearchArtifacts,
+		s.scrapeHealth,
 	}
 	errChan := make(chan error, len(metricScrapes))
 
@@ -1075,12 +1076,12 @@ func unmarshallSearchReq(res *http.Response, sr *searchResponse) error {
 
 	body, err := io.ReadAll(res.Body)
 	if err != nil {
-		return fmt.Errorf("Failed to read response: %w", err)
+		return fmt.Errorf("failed to read response: %w", err)
 	}
 
 	err = xml.Unmarshal(body, &sr)
 	if err != nil {
-		return fmt.Errorf("Failed to unmarshall response: %w", err)
+		return fmt.Errorf("failed to unmarshall response: %w", err)
 	}
 
 	return nil
@@ -1134,7 +1135,7 @@ func (s *splunkScraper) scrapeIndexesTotalSize(ctx context.Context, now pcommon.
 	}
 
 	ctx = context.WithValue(ctx, endpointType("type"), typeIdx)
-	var it IndexesExtended
+	var it indexesExtended
 	ept := apiDict[`SplunkDataIndexesExtended`]
 
 	req, err := s.splunkClient.createAPIRequest(ctx, ept)
@@ -1187,7 +1188,7 @@ func (s *splunkScraper) scrapeIndexesEventCount(ctx context.Context, now pcommon
 	}
 
 	ctx = context.WithValue(ctx, endpointType("type"), typeIdx)
-	var it IndexesExtended
+	var it indexesExtended
 
 	ept := apiDict[`SplunkDataIndexesExtended`]
 
@@ -1234,7 +1235,7 @@ func (s *splunkScraper) scrapeIndexesBucketCount(ctx context.Context, now pcommo
 	}
 
 	ctx = context.WithValue(ctx, endpointType("type"), typeIdx)
-	var it IndexesExtended
+	var it indexesExtended
 
 	ept := apiDict[`SplunkDataIndexesExtended`]
 
@@ -1287,7 +1288,7 @@ func (s *splunkScraper) scrapeIndexesRawSize(ctx context.Context, now pcommon.Ti
 	}
 
 	ctx = context.WithValue(ctx, endpointType("type"), typeIdx)
-	var it IndexesExtended
+	var it indexesExtended
 
 	ept := apiDict[`SplunkDataIndexesExtended`]
 
@@ -1340,7 +1341,7 @@ func (s *splunkScraper) scrapeIndexesBucketEventCount(ctx context.Context, now p
 	}
 
 	ctx = context.WithValue(ctx, endpointType("type"), typeIdx)
-	var it IndexesExtended
+	var it indexesExtended
 
 	ept := apiDict[`SplunkDataIndexesExtended`]
 
@@ -1410,7 +1411,7 @@ func (s *splunkScraper) scrapeIndexesBucketHotWarmCount(ctx context.Context, now
 	}
 
 	ctx = context.WithValue(ctx, endpointType("type"), typeIdx)
-	var it IndexesExtended
+	var it indexesExtended
 
 	ept := apiDict[`SplunkDataIndexesExtended`]
 
@@ -1473,7 +1474,7 @@ func (s *splunkScraper) scrapeIntrospectionQueues(ctx context.Context, now pcomm
 	}
 
 	ctx = context.WithValue(ctx, endpointType("type"), typeIdx)
-	var it IntrospectionQueues
+	var it introspectionQueues
 
 	ept := apiDict[`SplunkIntrospectionQueues`]
 
@@ -1521,7 +1522,7 @@ func (s *splunkScraper) scrapeIntrospectionQueuesBytes(ctx context.Context, now 
 	}
 
 	ctx = context.WithValue(ctx, endpointType("type"), typeIdx)
-	var it IntrospectionQueues
+	var it introspectionQueues
 
 	ept := apiDict[`SplunkIntrospectionQueues`]
 
@@ -1571,7 +1572,7 @@ func (s *splunkScraper) scrapeKVStoreStatus(ctx context.Context, now pcommon.Tim
 	}
 
 	ctx = context.WithValue(ctx, endpointType("type"), typeCm)
-	var kvs KVStoreStatus
+	var kvs kvStoreStatus
 
 	ept := apiDict[`SplunkKVStoreStatus`]
 
@@ -1604,7 +1605,7 @@ func (s *splunkScraper) scrapeKVStoreStatus(ctx context.Context, now pcommon.Tim
 		// a 0 gauge value means that the metric was not reported in the api call
 		// to the introspection endpoint.
 		if st == "" {
-			st = KVStatusUnknown
+			st = kvStatusUnknown
 			// set to 0 to indicate no status being reported
 			s.mb.RecordSplunkKvstoreStatusDataPoint(now, 0, se, ext, st)
 		} else {
@@ -1612,14 +1613,14 @@ func (s *splunkScraper) scrapeKVStoreStatus(ctx context.Context, now pcommon.Tim
 		}
 
 		if rs == "" {
-			rs = KVRestoreStatusUnknown
+			rs = kvRestoreStatusUnknown
 			s.mb.RecordSplunkKvstoreReplicationStatusDataPoint(now, 0, rs)
 		} else {
 			s.mb.RecordSplunkKvstoreReplicationStatusDataPoint(now, 1, rs)
 		}
 
 		if brs == "" {
-			brs = KVBackupStatusFailed
+			brs = kvBackupStatusFailed
 			s.mb.RecordSplunkKvstoreBackupStatusDataPoint(now, 0, brs)
 		} else {
 			s.mb.RecordSplunkKvstoreBackupStatusDataPoint(now, 1, brs)
@@ -1634,7 +1635,7 @@ func (s *splunkScraper) scrapeSearchArtifacts(ctx context.Context, now pcommon.T
 	}
 
 	ctx = context.WithValue(ctx, endpointType("type"), typeSh)
-	var da DispatchArtifacts
+	var da dispatchArtifacts
 
 	ept := apiDict[`SplunkDispatchArtifacts`]
 
@@ -1731,5 +1732,57 @@ func (s *splunkScraper) scrapeSearchArtifacts(ctx context.Context, now pcommon.T
 			}
 			s.mb.RecordSplunkServerSearchartifactsJobCacheCountDataPoint(now, cacheTotalEntries, s.conf.SHEndpoint.Endpoint)
 		}
+	}
+}
+
+// Scrape Health Introspection Endpoint
+func (s *splunkScraper) scrapeHealth(ctx context.Context, now pcommon.Timestamp, errs chan error) {
+	if !s.conf.MetricsBuilderConfig.Metrics.SplunkHealth.Enabled {
+		return
+	}
+
+	ctx = context.WithValue(ctx, endpointType("type"), typeCm)
+
+	ept := apiDict[`SplunkHealth`]
+	var ha healthArtifacts
+
+	req, err := s.splunkClient.createAPIRequest(ctx, ept)
+	if err != nil {
+		errs <- err
+		return
+	}
+
+	res, err := s.splunkClient.makeRequest(req)
+	if err != nil {
+		errs <- err
+		return
+	}
+	defer res.Body.Close()
+
+	if err := json.NewDecoder(res.Body).Decode(&ha); err != nil {
+		errs <- err
+		return
+	}
+
+	s.settings.Logger.Debug(fmt.Sprintf("Features: %s", ha.Entries))
+	for _, details := range ha.Entries {
+		s.traverseHealthDetailFeatures(details.Content, now)
+	}
+}
+
+func (s *splunkScraper) traverseHealthDetailFeatures(details healthDetails, now pcommon.Timestamp) {
+	if details.Features == nil {
+		return
+	}
+
+	for k, feature := range details.Features {
+		if feature.Health != "red" {
+			s.settings.Logger.Debug(feature.Health)
+			s.mb.RecordSplunkHealthDataPoint(now, 1, k, feature.Health)
+		} else {
+			s.settings.Logger.Debug(feature.Health)
+			s.mb.RecordSplunkHealthDataPoint(now, 0, k, feature.Health)
+		}
+		s.traverseHealthDetailFeatures(feature, now)
 	}
 }

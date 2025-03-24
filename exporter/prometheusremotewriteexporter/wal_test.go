@@ -21,6 +21,8 @@ import (
 	"go.opentelemetry.io/collector/component/componenttest"
 	"go.opentelemetry.io/collector/config/confighttp"
 	"go.opentelemetry.io/collector/exporter/exportertest"
+
+	"github.com/open-telemetry/opentelemetry-collector-contrib/exporter/prometheusremotewriteexporter/internal/metadata"
 )
 
 func doNothingExportSink(_ context.Context, reqL []*prompb.WriteRequest) error {
@@ -160,19 +162,17 @@ func TestWAL_persist(t *testing.T) {
 }
 
 func TestExportWithWALEnabled(t *testing.T) {
-	t.Skip("skipping test, see https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/37715")
 	cfg := &Config{
 		WAL: &WALConfig{
 			Directory: t.TempDir(),
 		},
-		TargetInfo:    &TargetInfo{},    // Declared just to avoid nil pointer dereference.
-		CreatedMetric: &CreatedMetric{}, // Declared just to avoid nil pointer dereference.
+		TargetInfo: &TargetInfo{}, // Declared just to avoid nil pointer dereference.
 	}
 	buildInfo := component.BuildInfo{
 		Description: "OpenTelemetry Collector",
 		Version:     "1.0",
 	}
-	set := exportertest.NewNopSettings()
+	set := exportertest.NewNopSettings(metadata.Type)
 	set.BuildInfo = buildInfo
 
 	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
@@ -191,6 +191,8 @@ func TestExportWithWALEnabled(t *testing.T) {
 
 		assert.Len(t, writeReq.Timeseries, 1)
 	}))
+	defer server.Close()
+
 	clientConfig := confighttp.NewDefaultClientConfig()
 	clientConfig.Endpoint = server.URL
 	cfg.ClientConfig = clientConfig

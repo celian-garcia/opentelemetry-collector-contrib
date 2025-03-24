@@ -64,7 +64,7 @@ func WithLogParser(functions map[string]ottl.Factory[ottllog.TransformContext]) 
 		if err != nil {
 			return err
 		}
-		return ottl.WithParserCollectionContext(ottllog.ContextName, &logParser, convertLogStatements)(pc)
+		return ottl.WithParserCollectionContext(ottllog.ContextName, &logParser, ottl.WithStatementConverter(convertLogStatements))(pc)
 	}
 }
 
@@ -75,7 +75,7 @@ func WithLogErrorMode(errorMode ottl.ErrorMode) LogParserCollectionOption {
 func NewLogParserCollection(settings component.TelemetrySettings, options ...LogParserCollectionOption) (*LogParserCollection, error) {
 	pcOptions := []ottl.ParserCollectionOption[LogsConsumer]{
 		withCommonContextParsers[LogsConsumer](),
-		ottl.EnableParserCollectionModifiedStatementLogging[LogsConsumer](true),
+		ottl.EnableParserCollectionModifiedPathsLogging[LogsConsumer](true),
 	}
 
 	for _, option := range options {
@@ -91,16 +91,24 @@ func NewLogParserCollection(settings component.TelemetrySettings, options ...Log
 	return &lpc, nil
 }
 
-func convertLogStatements(pc *ottl.ParserCollection[LogsConsumer], _ *ottl.Parser[ottllog.TransformContext], _ string, statements ottl.StatementsGetter, parsedStatements []*ottl.Statement[ottllog.TransformContext]) (LogsConsumer, error) {
+func convertLogStatements(pc *ottl.ParserCollection[LogsConsumer], statements ottl.StatementsGetter, parsedStatements []*ottl.Statement[ottllog.TransformContext]) (LogsConsumer, error) {
 	contextStatements, err := toContextStatements(statements)
 	if err != nil {
 		return nil, err
 	}
-	globalExpr, errGlobalBoolExpr := parseGlobalExpr(filterottl.NewBoolExprForLog, contextStatements.Conditions, pc.ErrorMode, pc.Settings, filterottl.StandardLogFuncs())
+	errorMode := pc.ErrorMode
+	if contextStatements.ErrorMode != "" {
+		errorMode = contextStatements.ErrorMode
+	}
+	var parserOptions []ottl.Option[ottllog.TransformContext]
+	if contextStatements.Context == "" {
+		parserOptions = append(parserOptions, ottllog.EnablePathContextNames())
+	}
+	globalExpr, errGlobalBoolExpr := parseGlobalExpr(filterottl.NewBoolExprForLogWithOptions, contextStatements.Conditions, errorMode, pc.Settings, filterottl.StandardLogFuncs(), parserOptions)
 	if errGlobalBoolExpr != nil {
 		return nil, errGlobalBoolExpr
 	}
-	lStatements := ottllog.NewStatementSequence(parsedStatements, pc.Settings, ottllog.WithStatementSequenceErrorMode(pc.ErrorMode))
+	lStatements := ottllog.NewStatementSequence(parsedStatements, pc.Settings, ottllog.WithStatementSequenceErrorMode(errorMode))
 	return logStatements{lStatements, globalExpr}, nil
 }
 
