@@ -140,15 +140,18 @@ func TestAzureScraperScrape(t *testing.T) {
 			s := &azureScraper{
 				cfg:                          tt.fields.cfg,
 				settings:                     settings.TelemetrySettings,
-				mb:                           metadata.NewMetricsBuilder(tt.fields.cfg.MetricsBuilderConfig, settings),
+				mbs:                          newConcurrentMapImpl[*metadata.MetricsBuilder](),
 				mutex:                        &sync.Mutex{},
 				time:                         getTimeMock(),
 				clientOptionsResolver:        optionsResolver,
+				receiverSettings:             settings,
 				storageAccountSpecificConfig: newStorageAccountSpecificConfig(tt.fields.cfg.Services),
 
-				// From there, initialize everything that is normally initialized in start() func
+				// From there, initialize everything normally initialized in start() func
 				subscriptions: newUpdatedMap[string, *azureSubscription](),
+				resourceTypes: azResourceTypeStore{},
 				resources:     azResourceStore{},
+				regions:       azRegionStore{},
 				metrics:       azMetricsStore{},
 			}
 
@@ -262,15 +265,18 @@ func TestAzureScraperScrapeFilterMetrics(t *testing.T) {
 		s := &azureScraper{
 			cfg:                          cfgLimitedMertics,
 			settings:                     settings.TelemetrySettings,
-			mb:                           metadata.NewMetricsBuilder(metadata.DefaultMetricsBuilderConfig(), settings),
+			mbs:                          newConcurrentMapImpl[*metadata.MetricsBuilder](),
 			mutex:                        &sync.Mutex{},
 			time:                         getTimeMock(),
 			clientOptionsResolver:        optionsResolver,
+			receiverSettings:             settings,
 			storageAccountSpecificConfig: newStorageAccountSpecificConfig(cfgLimitedMertics.Services),
 
-			// From there, initialize everything that is normally initialized in start() func
+			// From there, initialize everything normally initialized in start() func
 			subscriptions: newUpdatedMap[string, *azureSubscription](),
+			resourceTypes: azResourceTypeStore{},
 			resources:     azResourceStore{},
+			regions:       azRegionStore{},
 			metrics:       azMetricsStore{},
 		}
 
@@ -322,15 +328,18 @@ func getNominalTestScraper() *azureScraper {
 	return &azureScraper{
 		cfg:                          cfg,
 		settings:                     settings.TelemetrySettings,
-		mb:                           metadata.NewMetricsBuilder(metadata.DefaultMetricsBuilderConfig(), settings),
+		mbs:                          newConcurrentMapImpl[*metadata.MetricsBuilder](),
 		mutex:                        &sync.Mutex{},
 		time:                         getTimeMock(),
 		clientOptionsResolver:        optionsResolver,
+		receiverSettings:             settings,
 		storageAccountSpecificConfig: newStorageAccountSpecificConfig(cfg.Services),
 
-		// From there, initialize everything that is normally initialized in start() func
+		// From there, initialize everything normally initialized in start() func
 		subscriptions: newUpdatedMap[string, *azureSubscription](),
+		resourceTypes: azResourceTypeStore{},
 		resources:     azResourceStore{},
+		regions:       azRegionStore{},
 		metrics:       azMetricsStore{},
 	}
 }
@@ -340,7 +349,7 @@ func TestAzureScraperGetResources(t *testing.T) {
 	s.resources["subscriptionId1"] = newUpdatedMap[string, *azureResource]()
 	s.subscriptions.Data["subscriptionId1"] = &azureSubscription{}
 	s.cfg.CacheResources = 0
-	s.loadResources(t.Context(), "subscriptionId1")
+	s.loadResourcesAndTypes(t.Context(), "subscriptionId1")
 	assert.Contains(t, s.resources, "subscriptionId1")
 	assert.Len(t, s.resources["subscriptionId1"].Data, 3)
 
@@ -358,7 +367,7 @@ func TestAzureScraperGetResources(t *testing.T) {
 		getMetricsValuesMockData(),
 		nil,
 	)
-	s.loadResources(t.Context(), "subscriptionId1")
+	s.loadResourcesAndTypes(t.Context(), "subscriptionId1")
 	assert.Contains(t, s.resources, "subscriptionId1")
 	assert.Empty(t, s.resources["subscriptionId1"].Data)
 }
@@ -492,15 +501,18 @@ func TestAzureScraperProcessResources(t *testing.T) {
 			s := &azureScraper{
 				cfg:                          tt.cfg,
 				settings:                     settings.TelemetrySettings,
-				mb:                           metadata.NewMetricsBuilder(metadata.DefaultMetricsBuilderConfig(), settings),
+				mbs:                          newConcurrentMapImpl[*metadata.MetricsBuilder](),
 				mutex:                        &sync.Mutex{},
 				time:                         getTimeMock(),
 				clientOptionsResolver:        optionsResolver,
+				receiverSettings:             settings,
 				storageAccountSpecificConfig: newStorageAccountSpecificConfig(tt.cfg.Services),
 
-				// From there, initialize everything that is normally initialized in start() func
+				// From there, initialize everything normally initialized in start() func
 				subscriptions: newUpdatedMap[string, *azureSubscription](),
+				resourceTypes: azResourceTypeStore{},
 				resources:     azResourceStore{},
+				regions:       azRegionStore{},
 				metrics:       azMetricsStore{},
 			}
 

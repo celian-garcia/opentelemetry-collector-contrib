@@ -93,6 +93,12 @@ type azureResource struct {
 	resourceType *string
 }
 
+// azureType is built from the collected list of azureResource.
+// It is just a helper allowing us to easily find back the resourceIDs to provide to the AzBatch API.
+type azureType struct {
+	resourceIDs []string
+}
+
 // metricsCompositeKey is a key used to uniquely identify a set of metrics.
 // This is used to group the queries that will be done and typically to build the request option.
 // It is composed of:
@@ -153,8 +159,9 @@ func newStorageAccountSpecificConfig(services []string) storageAccountSpecificCo
 func newScraper(conf *Config, settings receiver.Settings) *azureScraper {
 	return &azureScraper{
 		cfg:                          conf,
+		receiverSettings:             settings,
 		settings:                     settings.TelemetrySettings,
-		mb:                           metadata.NewMetricsBuilder(conf.MetricsBuilderConfig, settings),
+		mbs:                          newConcurrentMapImpl[*metadata.MetricsBuilder](),
 		mutex:                        &sync.Mutex{},
 		time:                         &timeWrapper{},
 		clientOptionsResolver:        newClientOptionsResolver(conf.Cloud),
@@ -168,19 +175,30 @@ type azSubscriptionStore = *updatedMap[string, *azureSubscription]
 // azResourceStore is a convenient alias for azureScraper.resources and azureBatchScraper.resources fields
 type azResourceStore = map[string]*updatedMap[string, *azureResource]
 
+// azResourceTypeStore is a convenient alias for azureBatchScraper.resourceTypes field
+type azResourceTypeStore = map[string]*updatedMap[string, *azureType]
+
+// azRegionStore is a convenient alias for azureBatchScraper.regions field
+type azRegionStore = map[string]*updatedMap[string, void]
+
 // azMetricsStore is a convenient alias for azureScraper.metrics and azureBatchScraper.metrics fields
 type azMetricsStore = map[string]map[string]*updatedMap[metricsCompositeKey, *azureResourceMetrics]
 
 type azureScraper struct {
-	cred     azcore.TokenCredential
-	cfg      *Config
-	settings component.TelemetrySettings
-	mb       *metadata.MetricsBuilder
+	cred             azcore.TokenCredential
+	cfg              *Config
+	receiverSettings receiver.Settings
+	settings         component.TelemetrySettings
+	mbs              concurrentMetricsBuilderMap[*metadata.MetricsBuilder]
 
 	// subscriptions on which we'll look up resources. Stored by subscription id.
 	subscriptions azSubscriptionStore
+	// resourceTypes on which we'll look up metrics. Stored by subscription id and resource type.
+	resourceTypes azResourceTypeStore
 	// resources on which we'll look up metrics. Stored by subscription id and resource id.
 	resources azResourceStore
+	// regions on which we'll collect values. Stored by subscription id.
+	regions azRegionStore
 	// metrics on which we'll collect values. Stored by subscription id, resource id, and metricsCompositeKey.
 	metrics azMetricsStore
 
@@ -196,7 +214,9 @@ func (s *azureScraper) start(_ context.Context, host component.Host) (err error)
 	}
 
 	s.subscriptions = newUpdatedMap[string, *azureSubscription]()
+	s.resourceTypes = azResourceTypeStore{}
 	s.resources = azResourceStore{}
+	s.regions = azRegionStore{}
 	s.metrics = azMetricsStore{}
 
 	return err
@@ -208,54 +228,82 @@ func (s *azureScraper) loadSubscription(sub azureSubscription) {
 		DisplayName:    sub.DisplayName,
 	}
 	s.resources[sub.SubscriptionID] = newUpdatedMap[string, *azureResource]()
+	s.resourceTypes[sub.SubscriptionID] = newUpdatedMap[string, *azureType]()
+	s.regions[sub.SubscriptionID] = newUpdatedMap[string, void]()
 	s.metrics[sub.SubscriptionID] = make(map[string]*updatedMap[metricsCompositeKey, *azureResourceMetrics])
 }
 
 func (s *azureScraper) unloadSubscription(id string) {
 	s.settings.Logger.Debug("Unloading subscription", zap.String("subscription_id", id))
+
 	delete(s.subscriptions.Data, id)
+	delete(s.resourceTypes, id)
 	delete(s.resources, id)
+	delete(s.regions, id)
 	delete(s.metrics, id)
 }
 
 func (s *azureScraper) scrape(ctx context.Context) (pmetric.Metrics, error) {
 	s.loadSubscriptions(ctx)
 
-	for subscriptionID, subscription := range s.subscriptions.Data {
-		s.loadResources(ctx, subscriptionID)
+	var subWG sync.WaitGroup
 
-		resourcesIDsWithDefinitions := make(chan string)
+	for subID, subscription := range s.subscriptions.Data {
+		s.mbs.Set(subID, metadata.NewMetricsBuilder(s.cfg.MetricsBuilderConfig, s.receiverSettings))
+		subWG.Add(1)
 		go func(subscriptionID string) {
-			defer close(resourcesIDsWithDefinitions)
-			for resourceID := range s.resources[subscriptionID].Data {
-				s.loadMetricsDefinitions(ctx, subscriptionID, resourceID)
-				resourcesIDsWithDefinitions <- resourceID
+			defer subWG.Done()
+			s.loadResourcesAndTypes(ctx, subscriptionID)
+
+			resourcesIDsWithDefinitions := make(chan string)
+			go func(subscriptionID string) {
+				defer close(resourcesIDsWithDefinitions)
+				for resourceID := range s.resources[subscriptionID].Data {
+					s.loadMetricsDefinitions(ctx, subscriptionID, resourceID)
+					resourcesIDsWithDefinitions <- resourceID
+				}
+			}(subscriptionID)
+
+			var resourceWG sync.WaitGroup
+			for resourceID := range resourcesIDsWithDefinitions {
+				resourceWG.Add(1)
+				go func(subscriptionID, resourceID string) {
+					defer resourceWG.Done()
+					s.loadMetricsValues(ctx, subscriptionID, resourceID)
+				}(subscriptionID, resourceID)
 			}
-		}(subscriptionID)
 
-		var wg sync.WaitGroup
-		for resourceID := range resourcesIDsWithDefinitions {
-			wg.Add(1)
-			go func(subscriptionID, resourceID string) {
-				defer wg.Done()
-				s.loadMetricsValues(ctx, subscriptionID, resourceID)
-			}(subscriptionID, resourceID)
-		}
+			resourceWG.Wait()
 
-		wg.Wait()
-
-		// Once all metrics has been collected for one subscription, we move to the next.
-		// We need to keep it synchronous to have the subscription id in resource attributes and not metrics attributes.
-		// It can be revamped later if we need to parallelize more, but currently, resource emit is not thread safe.
-		rb := s.mb.NewResourceBuilder()
-		rb.SetAzuremonitorTenantID(s.cfg.TenantID)
-		rb.SetAzuremonitorSubscriptionID(subscriptionID)
-		rb.SetAzuremonitorSubscription(subscription.DisplayName)
-		s.mb.EmitForResource(metadata.WithResource(rb.Emit()))
+			// Once all metrics has been collected for one subscription, we save them in the associated metrics builder.
+			// Having a map of metrics builders, one per subscription, allows us to collect each subscription concurrently.
+			// We'll be able to emit them all at once at the end of the scrape, once all subscriptions have been processed.
+			mb, ok := s.mbs.Get(subID)
+			if !ok {
+				s.settings.Logger.Fatal("error: metrics builder not found for subscription")
+			}
+			rb := mb.NewResourceBuilder()
+			rb.SetAzuremonitorTenantID(s.cfg.TenantID)
+			rb.SetAzuremonitorSubscriptionID(subID)
+			rb.SetAzuremonitorSubscription(subscription.DisplayName)
+			mb.EmitForResource(metadata.WithResource(rb.Emit()))
+		}(subID)
 	}
-	return s.mb.Emit(), nil
+	subWG.Wait()
+
+	resultMetrics := pmetric.NewMetrics()
+	s.mbs.Range(func(_ string, mb *metadata.MetricsBuilder) {
+		metrics := mb.Emit()
+		for _, resourceMetrics := range metrics.ResourceMetrics().All() {
+			resourceMetrics.MoveTo(resultMetrics.ResourceMetrics().AppendEmpty())
+		}
+	})
+
+	s.mbs.Clear()
+	return resultMetrics, nil
 }
 
+// TODO: duplicate
 func (s *azureScraper) loadSubscriptions(ctx context.Context) {
 	s.settings.Logger.Debug("Loading the list of Azure Subscriptions", zap.Bool("discover_subscriptions", s.cfg.DiscoverSubscriptions))
 	if time.Since(s.subscriptions.LastUpdated).Seconds() < s.cfg.CacheResources {
@@ -351,21 +399,29 @@ func (s *azureScraper) loadSubscriptions(ctx context.Context) {
 		zap.Int("deleted_subscriptions_count", len(existingSubscriptions)))
 }
 
-func (s *azureScraper) loadResources(ctx context.Context, subscriptionID string) {
+// TODO: duplicate
+func (s *azureScraper) loadResourcesAndTypes(ctx context.Context, subscriptionID string) {
 	s.settings.Logger.Debug("Loading the list of Azure Resources",
 		zap.String("subscription_id", subscriptionID))
 
-	// Ensure that the map for this subscription ID is initialized before trying to access it to avoid nil pointer dereference.
+	// Ensure that the maps for this subscription ID are initialized before trying to access it to avoid nil pointer dereference.
 	if s.resources[subscriptionID] == nil {
 		s.resources[subscriptionID] = newUpdatedMap[string, *azureResource]()
 	}
+	if s.resourceTypes[subscriptionID] == nil {
+		s.resourceTypes[subscriptionID] = newUpdatedMap[string, *azureType]()
+	}
+	if s.regions[subscriptionID] == nil {
+		s.regions[subscriptionID] = newUpdatedMap[string, void]()
+	}
 
-	if time.Since(s.resources[subscriptionID].LastUpdated).Seconds() < s.cfg.CacheResources {
+	if time.Since(s.resources[subscriptionID].LastUpdated).Seconds() < s.cfg.CacheResources ||
+		time.Since(s.resourceTypes[subscriptionID].LastUpdated).Seconds() < s.cfg.CacheResources ||
+		time.Since(s.regions[subscriptionID].LastUpdated).Seconds() < s.cfg.CacheResources {
 		s.settings.Logger.Debug("Azure Resources are cached, skipping refresh",
 			zap.String("subscription_id", subscriptionID))
 		return
 	}
-
 	clientResources, clientErr := armresources.NewClient(subscriptionID, s.cred, s.clientOptionsResolver.GetArmResourceClientOptions(subscriptionID))
 	if clientErr != nil {
 		s.settings.Logger.Error("Failed to initialize the client for Azure Resources",
@@ -390,11 +446,12 @@ func (s *azureScraper) loadResources(ctx context.Context, subscriptionID string)
 		Filter: &filter,
 	}
 
+	resourceTypes := map[string]*azureType{}
 	pager := clientResources.NewListPager(opts)
 	page := 0
+
 	for pager.More() {
 		nextResult, err := pager.NextPage(ctx)
-
 		logFields := []zap.Field{
 			zap.String("subscription_id", subscriptionID),
 			zap.String("filter", filter),
@@ -418,12 +475,20 @@ func (s *azureScraper) loadResources(ctx context.Context, subscriptionID string)
 					attributeResourceType:  resource.Type,
 				}
 				if resource.Location != nil {
+					s.regions[subscriptionID].Data[*resource.Location] = struct{}{}
 					attributes[attributeLocation] = resource.Location
 				}
 				s.resources[subscriptionID].Data[*resource.ID] = &azureResource{
 					attributes:   attributes,
 					tags:         filterResourceTags(tagsFilterMap, resource.Tags),
 					resourceType: resource.Type,
+				}
+				if resourceTypes[*resource.Type] == nil {
+					resourceTypes[*resource.Type] = &azureType{
+						resourceIDs: []string{*resource.ID},
+					}
+				} else {
+					resourceTypes[*resource.Type].resourceIDs = append(resourceTypes[*resource.Type].resourceIDs, *resource.ID)
 				}
 			}
 			delete(existingResources, *resource.ID)
@@ -438,15 +503,18 @@ func (s *azureScraper) loadResources(ctx context.Context, subscriptionID string)
 	}
 
 	s.resources[subscriptionID].LastUpdated = time.Now()
+	s.resourceTypes[subscriptionID].LastUpdated = time.Now()
+	s.regions[subscriptionID].LastUpdated = time.Now()
+	maps.Copy(s.resourceTypes[subscriptionID].Data, resourceTypes)
 
-	// Pre-allocate the per-resource metrics entries here, while we are still on the synchronous
-	// path of scrape() (no goroutine has been launched yet for this subscription). The
-	// producer (loadMetricsDefinitions) and the consumers (loadMetricsValues) will both access
-	// s.metrics[subscriptionID]; Go maps are not safe for concurrent read/write even on different
-	// keys (a write may trigger a rehash that invalidates concurrent reads). By inserting all
-	// entries up front, we guarantee that only inner-struct fields are mutated concurrently
-	// afterwards, never the outer map itself. Covered by TestAzureScraperBatchScrape_NoRaceWithManyResourceTypes
-	// and the equivalent test on the non-batch scraper.
+	// Pre-allocate the per-resource-type metrics entries here, while we are still on the
+	// synchronous path of scrape() (no goroutine has been launched yet for this subscription).
+	// The producer (loadResourceMetricsDefinitionsByType) and the consumers
+	// (loadBatchMetricsValues) will both access s.metrics[subscriptionID]; Go maps are not safe
+	// for concurrent read/write even on different keys (a write may trigger a rehash that
+	// invalidates concurrent reads). By inserting all entries up front, we guarantee that only
+	// inner-struct fields are mutated concurrently afterwards, never the outer map itself.
+	// Covered by TestAzureScraperBatchScrape_NoRaceWithManyResourceTypes.
 	if s.metrics[subscriptionID] == nil {
 		s.metrics[subscriptionID] = make(map[string]*updatedMap[metricsCompositeKey, *azureResourceMetrics])
 	}
@@ -459,6 +527,8 @@ func (s *azureScraper) loadResources(ctx context.Context, subscriptionID string)
 	s.settings.Logger.Info("Loaded the list of Azure Resources",
 		zap.String("subscription_id", subscriptionID),
 		zap.Int("resources_count", len(s.resources[subscriptionID].Data)),
+		zap.Int("regions_count", len(s.regions[subscriptionID].Data)),
+		zap.Int("resource_types_count", len(s.resourceTypes[subscriptionID].Data)),
 		zap.Int("deleted_resources_count", len(existingResources)))
 }
 
@@ -500,25 +570,6 @@ func (s *azureScraper) processResources(resources []*armresources.GenericResourc
 	return subTypeResources
 }
 
-// buildSubTypeResource creates a virtual new resource with given type and ID.
-// The rest of the attributes (location, tags, etc...) are copied from the original resource.
-func buildSubTypeResource(orig armresources.GenericResourceExpanded, newType, newID string) *armresources.GenericResourceExpanded {
-	cloned := clone.Clone(orig).(armresources.GenericResourceExpanded)
-	cloned.ID = &newID
-	cloned.Type = &newType
-	return &cloned
-}
-
-func getResourceGroupFromID(id string) string {
-	s := regexp.MustCompile(`/resourcegroups/([^/]+)/`)
-	match := s.FindStringSubmatch(strings.ToLower(id))
-
-	if len(match) == 2 {
-		return match[1]
-	}
-	return ""
-}
-
 func (s *azureScraper) getResourcesFilter() string {
 	// TODO: switch to parsing services from
 	// https://learn.microsoft.com/en-us/azure/azure-monitor/essentials/metrics-supported
@@ -538,7 +589,7 @@ func (s *azureScraper) loadMetricsDefinitions(ctx context.Context, subscriptionI
 		zap.String("resource_id", resourceID),
 		zap.String("subscription_id", subscriptionID))
 
-	if time.Since(s.metrics[subscriptionID][resourceID].LastUpdated).Seconds() < s.cfg.CacheResourcesDefinitions {
+	if time.Since(s.metrics[subscriptionID][resourceID].LastUpdated).Seconds() < s.cfg.CacheMetricsDefinitions {
 		s.settings.Logger.Debug("Azure Metrics Definitions are cached, skipping refresh",
 			zap.String("resource_id", resourceID),
 			zap.String("subscription_id", subscriptionID))
@@ -625,6 +676,11 @@ func (s *azureScraper) loadMetricsValues(ctx context.Context, subscriptionID, re
 	metricsDef := s.metrics[subscriptionID][resourceID].Data
 	updatedAt := s.time.Now().Truncate(truncateTimeGrain)
 
+	mb, ok := s.mbs.Get(subscriptionID)
+	if !ok {
+		s.settings.Logger.Fatal("error: metrics builder not found for subscription")
+	}
+
 	clientMetricsValues, clientErr := armmonitor.NewMetricsClient(subscriptionID, s.cred, s.clientOptionsResolver.GetArmMonitorClientOptions())
 	if clientErr != nil {
 		s.settings.Logger.Error("Failed to initialize the client for Azure Metrics",
@@ -695,7 +751,7 @@ func (s *azureScraper) loadMetricsValues(ctx context.Context, subscriptionID, re
 						attributes[name] = value
 					}
 					for _, metricValue := range timeseriesElement.Data {
-						s.processTimeseriesData(resourceID, metric, metricValue, attributes)
+						s.processTimeseriesData(mb, resourceID, metric, metricValue, attributes)
 					}
 				}
 			}
@@ -726,6 +782,7 @@ func newResourceMetricsValuesRequestOptions(
 }
 
 func (s *azureScraper) processTimeseriesData(
+	mb *metadata.MetricsBuilder,
 	resourceID string,
 	metric *armmonitor.Metric,
 	metricValue *armmonitor.MetricValue,
@@ -748,7 +805,7 @@ func (s *azureScraper) processTimeseriesData(
 	}
 	for _, aggregation := range aggregationsData {
 		if aggregation.value != nil {
-			s.mb.AddDataPoint(
+			mb.AddDataPoint(
 				resourceID,
 				*metric.Name.Value,
 				aggregation.name,
@@ -759,6 +816,25 @@ func (s *azureScraper) processTimeseriesData(
 			)
 		}
 	}
+}
+
+// buildSubTypeResource creates a virtual new resource with given type and ID.
+// The rest of the attributes (location, tags, etc...) are copied from the original resource.
+func buildSubTypeResource(orig armresources.GenericResourceExpanded, newType, newID string) *armresources.GenericResourceExpanded {
+	cloned := clone.Clone(orig).(armresources.GenericResourceExpanded)
+	cloned.ID = &newID
+	cloned.Type = &newType
+	return &cloned
+}
+
+func getResourceGroupFromID(id string) string {
+	s := regexp.MustCompile(`/resourcegroups/([^/]+)/`)
+	match := s.FindStringSubmatch(strings.ToLower(id))
+
+	if len(match) == 2 {
+		return match[1]
+	}
+	return ""
 }
 
 // getMetricAggregations returns a list of aggregations for a given namespace/metric.

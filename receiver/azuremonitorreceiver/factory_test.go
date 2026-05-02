@@ -41,7 +41,7 @@ func TestNewFactory(t *testing.T) {
 					MetricsBuilderConfig:              metadata.DefaultMetricsBuilderConfig(),
 					Services:                          monitorServices,
 					CacheResources:                    24 * 60 * 60,
-					CacheResourcesDefinitions:         24 * 60 * 60,
+					CacheMetricsDefinitions:           24 * 60 * 60,
 					MaximumNumberOfMetricsInACall:     20,
 					MaximumNumberOfRecordsPerResource: 10,
 					Credentials:                       servicePrincipal,

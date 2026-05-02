@@ -28,27 +28,15 @@ import (
 	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/azuremonitorreceiver/internal/metadata"
 )
 
-// azureType is built from the collected list of azureResource.
-// It is just a helper allowing us to easily find back the resourceIDs to provide to the AzBatch API.
-type azureType struct {
-	resourceIDs []string
-}
-
-// azResourceTypeStore is a convenient alias for azureBatchScraper.resourceTypes field
-type azResourceTypeStore = map[string]*updatedMap[string, *azureType]
-
-// azRegionStore is a convenient alias for azureBatchScraper.regions field
-type azRegionStore = map[string]*updatedMap[string, void]
-
 func newBatchScraper(conf *Config, settings receiver.Settings) *azureBatchScraper {
 	return &azureBatchScraper{
 		cfg:                          conf,
 		receiverSettings:             settings,
 		settings:                     settings.TelemetrySettings,
+		mbs:                          newConcurrentMapImpl[*metadata.MetricsBuilder](),
 		mutex:                        &sync.Mutex{},
 		time:                         &timeWrapper{},
 		clientOptionsResolver:        newClientOptionsResolver(conf.Cloud),
-		mbs:                          newConcurrentMapImpl[*metadata.MetricsBuilder](),
 		storageAccountSpecificConfig: newStorageAccountSpecificConfig(conf.Services),
 	}
 }
@@ -68,7 +56,7 @@ type azureBatchScraper struct {
 	resources azResourceStore
 	// regions on which we'll collect values. Stored by subscription id.
 	regions azRegionStore
-	// metrics on which we'll collect values. Stored by subscription id, resource id, and metricsCompositeKey.
+	// metrics on which we'll collect values. Stored by subscription id, resource type, and metricsCompositeKey.
 	metrics azMetricsStore
 
 	mutex                        *sync.Mutex
@@ -77,7 +65,7 @@ type azureBatchScraper struct {
 	storageAccountSpecificConfig storageAccountSpecificConfig
 }
 
-func (s *azureBatchScraper) GetMetricsBatchValuesClient(region string) (*azmetrics.Client, error) {
+func (s *azureBatchScraper) getMetricsBatchValuesClient(region string) (*azmetrics.Client, error) {
 	endpoint := "https://" + region + ".metrics.monitor.azure.com"
 	s.settings.Logger.Info("Batch Endpoint", zap.String("endpoint", endpoint))
 	return azmetrics.NewClient(endpoint, s.cred, s.clientOptionsResolver.GetAzMetricsClientOptions())
@@ -274,7 +262,7 @@ func (s *azureBatchScraper) loadSubscriptions(ctx context.Context) {
 		zap.Int("deleted_subscriptions_count", len(existingSubscriptions)))
 }
 
-// TODO: partially duplicate
+// TODO: duplicate
 func (s *azureBatchScraper) loadResourcesAndTypes(ctx context.Context, subscriptionID string) {
 	s.settings.Logger.Debug("Loading the list of Azure Resources",
 		zap.String("subscription_id", subscriptionID))
@@ -291,8 +279,8 @@ func (s *azureBatchScraper) loadResourcesAndTypes(ctx context.Context, subscript
 	}
 
 	if time.Since(s.resources[subscriptionID].LastUpdated).Seconds() < s.cfg.CacheResources ||
-		time.Since(s.resourceTypes[subscriptionID].LastUpdated).Seconds() < s.cfg.CacheResourcesDefinitions ||
-		time.Since(s.regions[subscriptionID].LastUpdated).Seconds() < s.cfg.CacheResourcesDefinitions {
+		time.Since(s.resourceTypes[subscriptionID].LastUpdated).Seconds() < s.cfg.CacheResources ||
+		time.Since(s.regions[subscriptionID].LastUpdated).Seconds() < s.cfg.CacheResources {
 		s.settings.Logger.Debug("Azure Resources are cached, skipping refresh",
 			zap.String("subscription_id", subscriptionID))
 		return
@@ -466,7 +454,7 @@ func (s *azureBatchScraper) loadResourceMetricsDefinitionsByType(ctx context.Con
 		zap.String("resource_type", resourceType),
 		zap.String("subscription_id", subscriptionID))
 
-	if time.Since(s.metrics[subscriptionID][resourceType].LastUpdated).Seconds() < s.cfg.CacheResourcesDefinitions {
+	if time.Since(s.metrics[subscriptionID][resourceType].LastUpdated).Seconds() < s.cfg.CacheMetricsDefinitions {
 		s.settings.Logger.Debug("Azure Metrics Definitions are cached, skipping refresh",
 			zap.String("resource_type", resourceType),
 			zap.String("subscription_id", subscriptionID))
@@ -570,7 +558,7 @@ func (s *azureBatchScraper) loadBatchMetricsValues(ctx context.Context, subscrip
 		startTime := now.Add(time.Duration(-timeGrains[compositeKey.timeGrain]) * time.Second * 4) // times 4 because for some resources, data are missing for the very latest timestamp. The processing will keep only the latest timestamp with data.
 
 		for region := range s.regions[subscriptionID].Data {
-			clientMetrics, clientErr := s.GetMetricsBatchValuesClient(region)
+			clientMetrics, clientErr := s.getMetricsBatchValuesClient(region)
 			if clientErr != nil {
 				s.settings.Logger.Error("Failed to initialize the client for Azure Metrics",
 					zap.String("resource_type", resourceType),

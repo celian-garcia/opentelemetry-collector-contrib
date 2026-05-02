@@ -44,7 +44,7 @@ func createDefaultConfig() component.Config {
 		ControllerConfig:                  cfg,
 		MetricsBuilderConfig:              metadata.DefaultMetricsBuilderConfig(),
 		CacheResources:                    24 * 60 * 60,
-		CacheResourcesDefinitions:         24 * 60 * 60,
+		CacheMetricsDefinitions:           24 * 60 * 60,
 		MaximumNumberOfMetricsInACall:     20,
 		MaximumNumberOfRecordsPerResource: 10,
 		Services:                          monitorServices,

@@ -351,14 +351,15 @@ func TestAzureScraperBatchScrape_NoRaceWithManyResourceTypes(t *testing.T) {
 
 	s := &azureBatchScraper{
 		cfg:                          cfg,
+		settings:                     settings.TelemetrySettings,
 		mbs:                          newConcurrentMapImpl[*metadata.MetricsBuilder](),
 		mutex:                        &sync.Mutex{},
 		time:                         getTimeMock(),
 		clientOptionsResolver:        optionsResolver,
 		receiverSettings:             settings,
-		settings:                     settings.TelemetrySettings,
 		storageAccountSpecificConfig: newStorageAccountSpecificConfig(cfg.Services),
 
+		// From there, initialize everything normally initialized in start() func
 		subscriptions: newUpdatedMap[string, *azureSubscription](),
 		resourceTypes: azResourceTypeStore{},
 		resources:     azResourceStore{},
